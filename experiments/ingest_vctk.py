@@ -50,13 +50,19 @@ import sys
 import zipfile
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 from sr.config import Settings, load_settings  # noqa: E402
 from sr.datasets import Recording  # noqa: E402
+from sr.diagnostics import signatures_of  # noqa: E402
 from sr.preprocessing import PreprocessingSubsystem  # noqa: E402
 
 logger = logging.getLogger('ingest_vctk')
+
+#: Nome do arquivo de assinaturas de canal gravado ao lado de cada matriz de MFCCs.
+SIGNATURE_FILENAME = 'assinaturas.npz'
 
 #: Endereço oficial do corpus, conforme o registro de download de 14/06/2026.
 VCTK_URL = ('https://datashare.ed.ac.uk/bitstream/handle/10283/3443/'
@@ -304,6 +310,48 @@ def extract_speaker(
     return by_mic
 
 
+def write_signatures(
+    recordings: list[Recording],
+    settings: Settings,
+    features_path: Path,
+) -> int:
+    """Calcula e grava a assinatura de canal de cada gravação, sob todas as condições.
+
+    Isto acontece aqui, e não no diagnóstico, por uma razão que não é de organização:
+    o áudio do VCTK existe apenas enquanto o seu locutor está sendo processado. Uma
+    medida que dependa da forma de onda ou é tomada agora, ou exigiria decodificar o
+    corpus inteiro outra vez. O custo é desprezível — o arquivo tem alguns kilobytes
+    contra as dezenas de kilobytes da matriz de coeficientes.
+
+    Args:
+        recordings: Gravações do locutor corrente, já numeradas.
+        settings: Configuração, de onde vêm taxa, número de coeficientes e limiar.
+        features_path: Raiz das features da trilha.
+
+    Returns:
+        Número de gravações para as quais alguma assinatura foi gravada.
+    """
+    import librosa
+
+    written = 0
+    for recording in recordings:
+        destination = features_path / str(recording.speaker) / str(recording.utterance)
+        if (destination / SIGNATURE_FILENAME).exists():
+            continue
+
+        audio, _ = librosa.load(recording.path, sr=settings.source_sampling_rate)
+        signatures = signatures_of(
+            audio, settings.source_sampling_rate, settings.num_mfccs, settings.vad_top_db)
+        if not signatures:
+            continue
+
+        destination.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(destination / SIGNATURE_FILENAME, **signatures)
+        written += 1
+
+    return written
+
+
 def ingest(
     zip_path: Path,
     settings: Settings,
@@ -312,6 +360,7 @@ def ingest(
     features_root: Path,
     workdir: Path,
     min_free_gb: float,
+    with_signatures: bool = True,
 ) -> int:
     """Percorre o plano, processando e descartando o áudio locutor a locutor.
 
@@ -347,12 +396,16 @@ def ingest(
             by_mic = extract_speaker(archive, catalog, plan, speaker_name, workdir)
 
         try:
+            signed = 0
             for mic, recordings in by_mic.items():
                 processed, skipped = subsystems[mic].process(recordings)
                 total_processed += processed
-            logger.info('[%d/%d] %s: %d enunciados por trilha, %.1f GB livres.',
+                if with_signatures:
+                    signed += write_signatures(
+                        recordings, settings, subsystems[mic].settings.features_path)
+            logger.info('[%d/%d] %s: %d enunciados por trilha, %d assinaturas, %.1f GB livres.',
                         position, len(plan.speakers), speaker_name,
-                        len(plan.utterances[speaker_name]), free)
+                        len(plan.utterances[speaker_name]), signed, free)
         finally:
             # O áudio existe apenas durante o processamento deste locutor.
             shutil.rmtree(workdir, ignore_errors=True)
@@ -390,6 +443,10 @@ def main() -> int:
                         help='Diretório temporário do áudio (padrão: sob a raiz das features).')
     parser.add_argument('--min-free-gb', type=float, default=DEFAULT_MIN_FREE_GB,
                         help='Piso de disco livre, em GB.')
+    parser.add_argument('--no-signatures', action='store_true',
+                        help='Não calcula as assinaturas de canal durante a ingestão. '
+                             'Só use se não pretender rodar o diagnóstico: o áudio é '
+                             'apagado, e refazê-las exige decodificar o corpus de novo.')
     parser.add_argument('--dry-run', action='store_true',
                         help='Monta e grava o plano, sem extrair nem processar.')
     args = parser.parse_args()
@@ -443,7 +500,8 @@ def main() -> int:
         return 0
 
     logger.info('Disco livre antes de começar: %.1f GB.', free_gigabytes(features_root))
-    processed = ingest(zip_path, settings, plan, catalog, features_root, workdir, args.min_free_gb)
+    processed = ingest(zip_path, settings, plan, catalog, features_root, workdir,
+                       args.min_free_gb, with_signatures=not args.no_signatures)
     logger.info('Ingestão concluída: %d gravações processadas, %.1f GB livres.',
                 processed, free_gigabytes(features_root))
     return 0

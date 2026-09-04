@@ -55,63 +55,9 @@ from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 from sr.config import Settings, load_settings  # noqa: E402
 from sr.datasets import build_index  # noqa: E402
-from sr.preprocessing import signal  # noqa: E402
+from sr.diagnostics import CONDITIONS, channel_signature, extract_condition  # noqa: E402
 
 logger = logging.getLogger('channel_probe')
-
-#: Recortes de sinal que o diagnóstico sabe extrair.
-CONDITIONS = ('silence', 'speech', 'full')
-
-#: Número mínimo de amostras exigido para que um recorte seja utilizável.
-MIN_SAMPLES = 2048
-
-
-def extract_condition(audio: np.ndarray, condition: str, top_db: int) -> np.ndarray:
-    """Extrai do áudio o recorte correspondente à condição pedida.
-
-    Args:
-        audio: Sinal completo da gravação.
-        condition: Uma de ``'silence'``, ``'speech'`` ou ``'full'``.
-        top_db: Limiar da detecção de voz, em dB abaixo do pico.
-
-    Returns:
-        O recorte pedido do sinal.
-
-    Raises:
-        ValueError: Se a condição for desconhecida.
-    """
-    if condition == 'silence':
-        return signal.extract_silence(audio, top_db)
-    if condition == 'speech':
-        return signal.remove_silence(audio, top_db)
-    if condition == 'full':
-        return audio
-    raise ValueError(f'Condição desconhecida: {condition!r}. Use uma de {CONDITIONS}.')
-
-
-def channel_signature(audio: np.ndarray, settings: Settings) -> np.ndarray | None:
-    """Resume um recorte de sinal em um vetor de estatísticas cepstrais.
-
-    A média de cada coeficiente descreve a coloração espectral média do recorte, e o
-    desvio descreve a sua variabilidade. Juntas, capturam a resposta em frequência do
-    canal sem depender de qualquer estrutura temporal.
-
-    Args:
-        audio: Recorte de sinal já isolado.
-        settings: Configuração, que fornece taxa de amostragem e número de coeficientes.
-
-    Returns:
-        Vetor de tamanho ``2 * num_mfccs``, ou ``None`` se o recorte for curto demais
-        para uma estimativa estável.
-    """
-    if len(audio) < MIN_SAMPLES:
-        return None
-
-    import librosa
-
-    mfccs = librosa.feature.mfcc(
-        y=audio, sr=settings.source_sampling_rate, n_mfcc=settings.num_mfccs)
-    return np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
 
 
 def build_features(settings: Settings, condition: str) -> dict[tuple[int, int], np.ndarray]:
@@ -133,7 +79,7 @@ def build_features(settings: Settings, condition: str) -> dict[tuple[int, int], 
     for position, recording in enumerate(recordings, start=1):
         audio, _ = librosa.load(recording.path, sr=settings.source_sampling_rate)
         segment = extract_condition(audio, condition, settings.vad_top_db)
-        signature = channel_signature(segment, settings)
+        signature = channel_signature(segment, settings.source_sampling_rate, settings.num_mfccs)
 
         if signature is None:
             skipped += 1

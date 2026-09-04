@@ -12,6 +12,7 @@ from __future__ import annotations
 import gc
 import logging
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -57,10 +58,34 @@ class PreprocessingSubsystem:
         pré-processamento completo leva horas.
         """
         recordings = build_index(self.settings)
-        total = len(recordings)
-        logger.info('Pré-processando %d gravações para %s.', total, self.settings.features_path)
+        logger.info('Pré-processando %d gravações para %s.',
+                    len(recordings), self.settings.features_path)
 
+        processed, skipped = self.process(recordings)
+
+        logger.info('Pré-processamento concluído: %d processadas, %d já existiam.',
+                    processed, skipped)
+        self._write_summary_figures()
+
+    def process(self, recordings: Sequence[Recording]) -> tuple[int, int]:
+        """Aplica a cadeia a uma lista explícita de gravações, já numeradas.
+
+        Separar isto de :meth:`run` permite que o chamador forneça o índice em vez de
+        deixá-lo ser derivado do conteúdo do diretório. A ingestão incremental do VCTK
+        depende disso: como o corpus é processado um locutor por vez, com o áudio
+        apagado em seguida, uma numeração derivada do que está em disco naquele
+        instante atribuiria o índice 1 a cada locutor sucessivamente, sobrescrevendo
+        as features do anterior.
+
+        Args:
+            recordings: Gravações a processar, com locutor e enunciado já atribuídos.
+
+        Returns:
+            Par ``(processadas, já existentes)``.
+        """
+        total = len(recordings)
         processed = skipped = 0
+
         for position, recording in enumerate(recordings, start=1):
             destination = self._destination(recording)
             if (destination / MFCC_FILENAME).exists():
@@ -76,9 +101,7 @@ class PreprocessingSubsystem:
                 logger.info('  [%d/%d] locutor %d, enunciado %d',
                             position, total, recording.speaker, recording.utterance)
 
-        logger.info('Pré-processamento concluído: %d processadas, %d já existiam.',
-                    processed, skipped)
-        self._write_summary_figures()
+        return processed, skipped
 
     def _destination(self, recording: Recording) -> Path:
         """Diretório de saída de uma gravação, no formato ``<features>/<locutor>/<enunciado>``."""

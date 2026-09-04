@@ -68,6 +68,25 @@ SR_CONFIG=configs/brsd.env .venv/bin/python experiments/run_experiment.py
 SR_CONFIG=configs/brsd.env .venv/bin/python experiments/channel_probe.py
 ```
 
+### VCTK
+
+O corpus não cabe em disco junto com o próprio zip de 11 GB, então a ingestão é
+incremental: um locutor por vez, com o áudio apagado logo após virar features.
+
+```bash
+# mostra o plano de numeração sem extrair nada
+.venv/bin/python experiments/ingest_vctk.py --dry-run
+
+# baixa (retomável) e ingere as duas trilhas
+.venv/bin/python experiments/ingest_vctk.py --download
+```
+
+A ingestão grava `vctk_manifesto.json` com a correspondência entre os índices e os
+nomes do corpus. A numeração é derivada dos nomes dos arquivos e restrita à
+interseção entre as trilhas, de modo que o índice `(locutor, enunciado)` designa a
+mesma pessoa dizendo a mesma frase em qualquer microfone — condição sem a qual o
+protocolo cross-mic não mede o que afirma medir.
+
 ## Testes
 
 ```bash

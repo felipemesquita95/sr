@@ -11,9 +11,21 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from keras import ops
 
 from sr.models.pooling import AttentiveStatisticsPooling, StatisticsPooling
 from sr.models.registry import ARCHITECTURES, build_model
+
+
+def to_numpy(tensor) -> np.ndarray:
+    """Traz um tensor de saída para a memória do processo.
+
+    Necessário porque o backend é o PyTorch com ROCm: os tensores ficam na GPU, e
+    ``np.asarray`` sobre eles falha. ``ops.convert_to_numpy`` é agnóstico de backend
+    e continuaria valendo se o backend mudasse.
+    """
+    return np.asarray(ops.convert_to_numpy(tensor))
+
 
 NUM_MFCCS = 13
 NUM_FRAMES = 64
@@ -30,7 +42,7 @@ def test_statistics_pooling_computes_mean_and_deviation():
     rng = np.random.default_rng(0)
     batch = rng.standard_normal((4, 20, 3)).astype(np.float32)
 
-    saida = np.asarray(StatisticsPooling()(batch))
+    saida = to_numpy(StatisticsPooling()(batch))
 
     assert saida.shape == (4, 6)
     assert np.allclose(saida[:, :3], batch.mean(axis=1), atol=1e-5)
@@ -45,7 +57,7 @@ def test_statistics_pooling_survives_a_constant_channel():
     """
     constante = np.ones((2, 10, 3), dtype=np.float32)
 
-    saida = np.asarray(StatisticsPooling()(constante))
+    saida = to_numpy(StatisticsPooling()(constante))
 
     assert np.all(np.isfinite(saida))
     assert np.allclose(saida[:, :3], 1.0)
@@ -60,8 +72,8 @@ def test_statistics_pooling_distinguishes_what_the_mean_cannot():
     calma = np.zeros((1, 10, 1), dtype=np.float32)
     agitada = np.tile(np.array([[-1.0], [1.0]], dtype=np.float32), (5, 1))[None, ...]
 
-    a = np.asarray(StatisticsPooling()(calma))
-    b = np.asarray(StatisticsPooling()(agitada))
+    a = to_numpy(StatisticsPooling()(calma))
+    b = to_numpy(StatisticsPooling()(agitada))
 
     assert np.allclose(a[:, 0], b[:, 0], atol=1e-6)  # mesma média
     assert not np.allclose(a[:, 1], b[:, 1])  # desvios distintos
@@ -72,8 +84,8 @@ def test_attentive_pooling_has_the_same_output_width():
     rng = np.random.default_rng(0)
     batch = rng.standard_normal((2, 20, 8)).astype(np.float32)
 
-    simples = np.asarray(StatisticsPooling()(batch))
-    atenta = np.asarray(AttentiveStatisticsPooling()(batch))
+    simples = to_numpy(StatisticsPooling()(batch))
+    atenta = to_numpy(AttentiveStatisticsPooling()(batch))
 
     assert atenta.shape == simples.shape == (2, 16)
     assert np.all(np.isfinite(atenta))
@@ -90,7 +102,7 @@ def test_every_architecture_builds_and_predicts(architecture):
     lote = rng.standard_normal((2, *INPUT_SHAPE)).astype(np.float32)
 
     model = build_model(architecture, INPUT_SHAPE, NUM_CLASSES, learning_rate=1e-3)
-    saida = np.asarray(model.predict(lote, verbose=0))
+    saida = to_numpy(model.predict(lote, verbose=0))
 
     assert saida.shape == (2, NUM_CLASSES)
     assert np.allclose(saida.sum(axis=1), 1.0, atol=1e-4)

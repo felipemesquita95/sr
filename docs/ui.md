@@ -17,17 +17,28 @@ Destino: diretório `ui/` na raiz do repositório.
 | decisão | escolha | motivo |
 |---|---|---|
 | Linguagem | Python 3.13 | mesma do sistema; reaproveita `src/sr` diretamente |
-| Framework | **Streamlit** | abas nativas, estado de sessão, zero front-end; `st.pyplot` aceita as figuras matplotlib que o projeto já sabe gerar |
-| Execução | local, `streamlit run ui/app.py` | é uma ferramenta de inspeção, não um serviço |
+| Framework | **Tkinter** (`ttk.Notebook`) | aplicação de desktop, em janela própria, sem navegador e sem servidor. Faz parte da biblioteca padrão — nenhuma dependência nova |
+| Gráficos | matplotlib com backend `TkAgg`, via `FigureCanvasTkAgg` | as figuras que o projeto já sabe gerar são embutidas direto nos painéis |
+| Execução | `.venv/bin/python ui/app.py` | é uma ferramenta de inspeção, não um serviço |
 | Fonte dos dados | `runs/` | nada é reprocessado do corpus (ver §2) |
 | Idioma da interface | português | mesma convenção do restante do projeto |
 
-Dependências novas, para `requirements-dev.txt`: `streamlit`. Tudo mais
-(`numpy`, `librosa`, `matplotlib`, `keras`) já é dependência do sistema.
+**Nenhuma dependência nova.** `tkinter` é biblioteca padrão e `matplotlib` já é
+dependência do sistema. Verificado nesta máquina: Tk 8.6, backend `TkAgg` importa,
+`DISPLAY=:0`.
+
+> Não usar Streamlit, Dash, Gradio, Flask ou qualquer coisa que sirva página em
+> navegador. A interface tem de abrir em janela própria. Esta é uma decisão de
+> projeto, não uma preferência de implementação.
 
 > **Backend do Keras.** A aplicação precisa de `KERAS_BACKEND=torch` no ambiente
 > antes de qualquer import de `keras`. Definir em `ui/app.py`, na primeira linha
 > executável, com `os.environ.setdefault('KERAS_BACKEND', 'torch')`.
+
+> **Backend do matplotlib.** Definir `matplotlib.use('TkAgg')` antes de importar
+> `pyplot`, também em `ui/app.py`. O sistema fixa `Agg` nos seus próprios módulos de
+> visualização, que gravam em arquivo; a interface precisa do outro backend para
+> desenhar na tela.
 
 ---
 
@@ -120,10 +131,16 @@ listar os diretórios.
 
 ---
 
-## 4. Barra lateral — seleção persistente
+## 4. Barra de seleção — persistente
 
-Fica visível em todas as abas e define o que elas mostram. Estado em
-`st.session_state`, para que trocar de aba **não** perca a seleção.
+Uma faixa fixa no topo da janela, **fora** do `ttk.Notebook`, de modo que continue
+visível ao trocar de aba e defina o que todas elas mostram.
+
+O estado vive em variáveis `tk.StringVar`/`tk.IntVar` de um único objeto de seleção,
+com observadores (`trace_add('write', ...)`) que avisam a aba visível para se
+redesenhar. Redesenhar **apenas a aba visível**, e não todas: montar dez painéis a
+cada troca de locutor deixa a interface lenta sem necessidade. As demais se
+atualizam ao serem exibidas, via `<<NotebookTabChanged>>`.
 
 1. **Corpus/trilha** — `vctk_mic1`, `vctk_mic2`, `vctknovad_mic1`,
    `vctknovad_mic2`, `brsd`. Lida do que existe em `runs/features/`, não fixa em
@@ -137,7 +154,7 @@ Fica visível em todas as abas e define o que elas mostram. Estado em
    enunciado em 1–4, garantindo uma seleção que preenche todas as abas. É o botão a
    usar durante uma apresentação.
 
-Rodapé da barra lateral: contagem de locutores, de enunciados e de gravações com
+Rodapé da faixa de seleção: contagem de locutores, de enunciados e de gravações com
 figuras na trilha corrente. Orienta sem precisar navegar.
 
 ---
@@ -289,7 +306,11 @@ KERAS_BACKEND=torch SR_CONFIG=<perfil> ARCHITECTURES=<arq> MAX_FOLDS=<n> \
 como subprocesso, com a saída em fluxo na tela. Requisitos:
 
 - **Nunca bloquear a interface.** `subprocess.Popen`, leitura incremental do
-  `stdout`, e o PID guardado em `st.session_state` para permitir interromper.
+  `stdout` em uma **thread separada** que despeja as linhas em uma `queue.Queue`, e
+  o processo guardado para permitir interromper. O Tk é de thread única: a thread
+  leitora nunca toca em widget. Quem consome a fila e atualiza a tela é o próprio
+  laço do Tk, por `root.after(200, ...)` — este é o ponto onde uma implementação
+  ingênua trava a janela inteira.
 - **Acompanhamento ao vivo** relendo `progresso.json` do diretório da partição e
   redesenhando perda e acurácia a cada atualização. O arquivo já é escrito a cada
   época pelo callback de treino; não é preciso instrumentar nada.
@@ -321,7 +342,7 @@ como subprocesso, com a saída em fluxo na tela. Requisitos:
 
 ```
 ui/
-├── app.py                 # entrada: configura a página, monta a barra lateral, despacha as abas
+├── app.py                 # entrada: cria a janela, a faixa de seleção e o ttk.Notebook
 ├── dados.py               # acesso a runs/: listar trilhas, locutores, enunciados; ler manifesto,
 │                          #   mfccs, assinaturas, métricas, progresso. Sem matplotlib aqui.
 ├── figuras.py             # replot ao vivo (MFCC, assinaturas, curvas) usando sr.preprocessing.visualization
@@ -345,10 +366,13 @@ a olho.
 
 ### Cache
 
-`@st.cache_data` na leitura de `mfccs.npy`, `assinaturas.npz`, do manifesto e dos
-`metricas.json`. São dezenas de milhares de arquivos pequenos: sem cache, cada
+`functools.lru_cache` na leitura de `mfccs.npy`, `assinaturas.npz`, do manifesto e
+dos `metricas.json`. São dezenas de milhares de arquivos pequenos: sem cache, cada
 troca de aba relê disco. **Não** cachear `progresso.json` — é justamente o arquivo
 que muda durante o treino.
+
+Cachear também as figuras já desenhadas, por `(trilha, locutor, enunciado, estágio)`.
+Recriar uma `Figure` a cada exibição é o que faz uma interface Tk parecer travada.
 
 ### Testes
 
@@ -358,6 +382,10 @@ que muda durante o treino.
 - Um enunciado sem figuras é relatado como ausente, e não levanta exceção.
 - O manifesto mapeia índice → nome em ambas as direções sem colisão.
 - A montagem do comando de treino preserva as sobrescritas de ambiente.
+
+Os testes cobrem `dados.py` e a montagem do comando, que não dependem de tela. Não
+tentar instanciar widgets na suíte: exigiria um `DISPLAY` e tornaria os testes
+dependentes de ambiente gráfico.
 
 ---
 
@@ -374,7 +402,8 @@ inexistente (2,8 GB livres). Alternativa barata: manter uma **vitrine** de algum
 dezenas de WAVs (poucas centenas de MB) só para essa finalidade, em vez do corpus
 inteiro.
 
-**Reprodução do áudio** (`st.audio`) — depende do mesmo pré-requisito.
+**Reprodução do áudio** — depende do mesmo pré-requisito, e no Tk exige biblioteca
+externa (`simpleaudio` ou `sounddevice`), já que a biblioteca padrão não toca áudio.
 
 **Metadados dos locutores.** O `speaker-info.txt` do VCTK traz idade, gênero,
 sotaque e região. Foi apagado com o corpus, mas são poucos KB e pode ser obtido

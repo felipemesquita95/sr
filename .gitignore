@@ -1,0 +1,30 @@
+# Ambientes
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Artefatos de execução (grandes e reprodutíveis).
+# Os padrões são ancorados na raiz para não capturarem o código-fonte:
+# "models/" sem barra inicial casaria também com src/sr/models/.
+/runs/
+/saves*/
+/models*/
+*.log
+*.keras
+*.h5
+
+# Dados
+/data/
+/datasets/
+*.zip
+*.wav
+*.flac
+
+# Configuração local
+.env
+.env.local
+
+# Editores
+.idea/
+.vscode/

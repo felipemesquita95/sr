@@ -1,0 +1,8 @@
+# Dependências exclusivas do desenvolvimento. As de execução estão em
+# requirements.txt, e são necessárias também para rodar a suíte: os testes
+# exercitam o código real, sem substitutos.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   python -m pytest
+
+pytest>=8.0

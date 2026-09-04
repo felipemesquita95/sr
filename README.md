@@ -68,6 +68,19 @@ SR_CONFIG=configs/brsd.env .venv/bin/python experiments/run_experiment.py
 SR_CONFIG=configs/brsd.env .venv/bin/python experiments/channel_probe.py
 ```
 
+## Testes
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+A suíte cobre as funções puras — processamento de sinal, alinhamento de
+comprimento, métricas e validação dos perfis — e verifica **propriedades**, não
+valores numéricos: complementaridade entre fala e silêncio, ausência de zeros no
+preenchimento, distinção entre classe nunca testada e classe sempre errada. São as
+propriedades que, se quebradas, invalidariam os experimentos sem produzir erro.
+
 ## Documentação
 
 - [`docs/metodologia.md`](docs/metodologia.md) — pipeline, decisões de projeto e justificativas

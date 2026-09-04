@@ -60,6 +60,14 @@ class Settings:
     vctk_root: Path | None = None
     #: Trilha de microfone do VCTK a utilizar (``mic1`` ou ``mic2``).
     vctk_mic: str = 'mic1'
+    #: Trilhas que o experimento abrange, e sobre as quais a numeração é definida.
+    #:
+    #: Existe para que o índice ``(locutor, enunciado)`` designe a mesma pessoa
+    #: dizendo a mesma frase em **todas** as trilhas que serão combinadas. Numerar
+    #: cada trilha isoladamente desloca as duas assim que um locutor não possui
+    #: alguma delas — o que ocorre de fato no VCTK, onde ``p280`` e ``p315`` não têm
+    #: ``mic2``. Vazio significa "apenas a trilha corrente".
+    vctk_mics: tuple[str, ...] = ()
     #: Número de locutores a considerar.
     num_speakers: int = 80
     #: Número máximo de enunciados por locutor.
@@ -171,6 +179,7 @@ _CONVERTERS = {
     'models_path': lambda v: Path(v).expanduser(),
     'features_paths': _as_path_list,
     'architectures': lambda v: tuple(a.strip() for a in str(v).split(',') if a.strip()),
+    'vctk_mics': lambda v: tuple(m.strip() for m in str(v).split(',') if m.strip()),
     'enable_vad': _as_bool,
     'preprocess_only': _as_bool,
     'cross_mic': _as_bool,
@@ -271,3 +280,9 @@ def _validate(settings: Settings) -> None:
         raise ValueError('cross_mic exige FEATURES_PATH_TRAIN e FEATURES_PATH_TEST.')
     if settings.both_mics and len(settings.features_paths) < 2:
         raise ValueError('both_mics exige ao menos dois diretórios em FEATURES_PATHS.')
+    if (settings.cross_mic or settings.both_mics) and len(settings.vctk_mics) < 2:
+        raise ValueError(
+            'Protocolos que combinam microfones exigem VCTK_MICS com ao menos duas '
+            'trilhas: é sobre a interseção delas que a numeração de locutores e '
+            'enunciados é definida. Sem isso cada trilha seria numerada isoladamente, '
+            'e o índice deixaria de designar a mesma pessoa nas duas.')

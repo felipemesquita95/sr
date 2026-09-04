@@ -106,29 +106,57 @@ def _index_vctk(settings: Settings) -> list[Recording]:
     trilha por vez é o que viabiliza o protocolo cross-mic: mesma voz, mesmo texto,
     mesmo instante, apenas o transdutor muda.
 
-    Locutores sem a trilha pedida são omitidos, e os índices são reatribuídos de forma
-    densa — evita classes vazias, que distorceriam as métricas macro.
+    A numeração é definida sobre a **interseção** das trilhas declaradas em
+    ``vctk_mics``, e não sobre a trilha que está sendo processada no momento.
+
+    A distinção é a diferença entre o protocolo medir o que afirma e não medir. Se
+    cada trilha fosse numerada isoladamente, bastaria um locutor sem ``mic2`` para
+    que todos os locutores seguintes deslocassem de um entre as duas numerações — e
+    ``p280`` e ``p315`` são exatamente esse caso no VCTK 0.92, nas posições 54 e 84.
+    O protocolo cross-microfone passaria a comparar pessoas diferentes, sem erro e
+    sem aviso, apenas devolvendo uma acurácia mais baixa que se leria como achado.
+
+    O mesmo vale um nível abaixo, para os enunciados: só entram os presentes em todas
+    as trilhas declaradas, para que o índice de frase também designe a mesma frase.
     """
     if settings.vctk_root is None or not settings.vctk_root.is_dir():
         raise FileNotFoundError(f'Raiz do VCTK não encontrada: {settings.vctk_root}')
 
-    suffix = f'_{settings.vctk_mic}.flac'
-    speaker_dirs = sorted(
-        d for d in settings.vctk_root.iterdir()
-        if d.is_dir() and any(f.name.endswith(suffix) for f in d.iterdir())
-    )
+    tracks = settings.vctk_mics or (settings.vctk_mic,)
+    if settings.vctk_mic not in tracks:
+        raise ValueError(
+            f'A trilha corrente {settings.vctk_mic!r} não está em vctk_mics={tracks}. '
+            f'A numeração seria definida sobre trilhas que não incluem a processada.')
 
-    skipped = len([d for d in settings.vctk_root.iterdir() if d.is_dir()]) - len(speaker_dirs)
-    if skipped:
+    def utterances_of(directory: Path, mic: str) -> set[str]:
+        """Identificadores de enunciado que a trilha ``mic`` possui neste locutor."""
+        suffix = f'_{mic}.flac'
+        return {f.name[:-len(suffix)].split('_')[-1]
+                for f in directory.iterdir() if f.name.endswith(suffix)}
+
+    directories = sorted(d for d in settings.vctk_root.iterdir() if d.is_dir())
+    complete: list[tuple[Path, list[str]]] = []
+    incomplete: list[str] = []
+
+    for directory in directories:
+        shared: set[str] | None = None
+        for mic in tracks:
+            present = utterances_of(directory, mic)
+            shared = present if shared is None else (shared & present)
+        if shared:
+            complete.append((directory, sorted(shared)))
+        else:
+            incomplete.append(directory.name)
+
+    if incomplete:
         logger.warning(
-            'VCTK: %d locutores sem a trilha %s foram omitidos da numeração.',
-            skipped, settings.vctk_mic,
-        )
+            'VCTK: %d locutores sem todas as trilhas %s foram omitidos da numeração: %s',
+            len(incomplete), ','.join(tracks), ', '.join(incomplete))
 
     recordings: list[Recording] = []
-    for speaker, directory in enumerate(speaker_dirs[:settings.num_speakers], start=1):
-        files = sorted(f for f in directory.iterdir() if f.name.endswith(suffix))
-        for utterance, path in enumerate(files[:settings.num_utterances], start=1):
+    for speaker, (directory, shared) in enumerate(complete[:settings.num_speakers], start=1):
+        for utterance, identifier in enumerate(shared[:settings.num_utterances], start=1):
+            path = directory / f'{directory.name}_{identifier}_{settings.vctk_mic}.flac'
             recordings.append(Recording(speaker, utterance, path))
 
     return recordings

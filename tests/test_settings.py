@@ -120,6 +120,25 @@ def test_multi_mic_requires_at_least_two_sources():
         _validate(Settings(both_mics=True, features_paths=[Path('a')]))
 
 
+def test_combining_microphones_requires_declaring_them():
+    """Os protocolos que cruzam trilhas exigem declará-las, e a razão é a numeração.
+
+    Sem ``VCTK_MICS``, cada trilha seria numerada sobre a sua própria listagem, e o
+    índice de locutor deixaria de designar a mesma pessoa nas duas — o defeito que
+    contaminou os resultados cross-microfone da implementação anterior.
+    """
+    with pytest.raises(ValueError, match='VCTK_MICS'):
+        _validate(Settings(cross_mic=True, features_path_train=Path('a'),
+                           features_path_test=Path('b')))
+    with pytest.raises(ValueError, match='VCTK_MICS'):
+        _validate(Settings(both_mics=True, features_paths=[Path('a'), Path('b')]))
+
+
+def test_declaring_both_microphones_satisfies_the_check():
+    _validate(Settings(cross_mic=True, features_path_train=Path('a'),
+                       features_path_test=Path('b'), vctk_mics=('mic1', 'mic2')))
+
+
 # ----------------------------------------------------------------------
 # Conversão dos valores textuais do perfil
 # ----------------------------------------------------------------------

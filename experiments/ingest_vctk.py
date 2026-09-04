@@ -361,6 +361,7 @@ def ingest(
     workdir: Path,
     min_free_gb: float,
     with_signatures: bool = True,
+    prefix: str = 'vctk',
 ) -> int:
     """Percorre o plano, processando e descartando o áudio locutor a locutor.
 
@@ -378,7 +379,8 @@ def ingest(
     """
     subsystems = {
         mic: PreprocessingSubsystem(
-            dataclasses.replace(settings, vctk_mic=mic, features_path=features_root / f'vctk_{mic}'))
+            dataclasses.replace(settings, vctk_mic=mic,
+                                features_path=features_root / f'{prefix}_{mic}'))
         for mic in plan.mics
     }
 
@@ -443,6 +445,11 @@ def main() -> int:
                         help='Diretório temporário do áudio (padrão: sob a raiz das features).')
     parser.add_argument('--min-free-gb', type=float, default=DEFAULT_MIN_FREE_GB,
                         help='Piso de disco livre, em GB.')
+    parser.add_argument('--prefix', default='vctk',
+                        help='Prefixo dos diretórios de features, um por trilha. Serve para '
+                             'manter variantes lado a lado — por exemplo uma com detecção de '
+                             'atividade vocal e outra sem, que só podem ser comparadas se '
+                             'ambas existirem.')
     parser.add_argument('--no-signatures', action='store_true',
                         help='Não calcula as assinaturas de canal durante a ingestão. '
                              'Só use se não pretender rodar o diagnóstico: o áudio é '
@@ -501,7 +508,8 @@ def main() -> int:
 
     logger.info('Disco livre antes de começar: %.1f GB.', free_gigabytes(features_root))
     processed = ingest(zip_path, settings, plan, catalog, features_root, workdir,
-                       args.min_free_gb, with_signatures=not args.no_signatures)
+                       args.min_free_gb, with_signatures=not args.no_signatures,
+                       prefix=args.prefix)
     logger.info('Ingestão concluída: %d gravações processadas, %.1f GB livres.',
                 processed, free_gigabytes(features_root))
     return 0

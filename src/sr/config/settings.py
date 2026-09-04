@@ -114,6 +114,18 @@ class Settings:
     both_mics: bool = False
     #: Diretórios de features a combinar no protocolo multi-microfone.
     features_paths: list[Path] = field(default_factory=list)
+    #: Embaralha os rótulos antes de montar os conjuntos, destruindo a associação
+    #: entre gravação e locutor.
+    #:
+    #: É o controle negativo do arcabouço, não do modelo. Sob permutação não existe
+    #: sinal aprendível: qualquer acurácia acima do acaso denuncia que alguma
+    #: informação atravessa a fronteira entre treino e teste — a mesma gravação nos
+    #: dois lados, normalização ajustada sobre o conjunto todo, ou parada antecipada
+    #: guiada pelo teste. O experimento verdadeiro só se interpreta depois que este
+    #: controle passa.
+    permute_labels: bool = False
+    #: Semente do embaralhamento de rótulos, independente da do conjunto de validação.
+    permutation_seed: int = 1234
 
     # ---- Treinamento -----------------------------------------------------
     #: Arquiteturas a treinar, em ordem.

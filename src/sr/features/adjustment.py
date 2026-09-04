@@ -327,6 +327,49 @@ class FeatureAdjustmentSubsystem:
     # Alinhamento, montagem e normalização
     # ------------------------------------------------------------------
 
+    def _permute_labels(
+        self,
+        train: list[Item],
+        validation: list[Item],
+        test: list[Item],
+    ) -> tuple[list[Item], list[Item], list[Item]]:
+        """Redistribui os rótulos ao acaso entre todas as gravações da partição.
+
+        O embaralhamento é feito sobre o conjunto reunido, e não dentro de cada
+        subconjunto, porque é a associação gravação↔locutor que precisa ser destruída
+        — inclusive a que atravessa a fronteira entre treino e teste. Permutar cada
+        lado isoladamente preservaria essa fronteira e deixaria passar exatamente o
+        vazamento que o controle existe para detectar.
+
+        A permutação é uma reordenação dos rótulos existentes, e não um sorteio novo:
+        a contagem de exemplos por classe fica idêntica à do experimento verdadeiro,
+        de modo que o acaso continua sendo ``1/num_speakers`` e as duas execuções são
+        comparáveis. O que muda é apenas *qual* gravação recebe *qual* rótulo.
+
+        Args:
+            train: Itens de treino.
+            validation: Itens de validação.
+            test: Itens de teste.
+
+        Returns:
+            Os três conjuntos, com as mesmas matrizes e os rótulos redistribuídos.
+        """
+        sizes = (len(train), len(validation), len(test))
+        labels = np.asarray([label for group in (train, validation, test) for _, label in group])
+
+        rng = np.random.default_rng(self.settings.permutation_seed)
+        rng.shuffle(labels)
+
+        matrices = [matrix for group in (train, validation, test) for matrix, _ in group]
+        shuffled = list(zip(matrices, (int(label) for label in labels)))
+
+        first, second = sizes[0], sizes[0] + sizes[1]
+        logger.warning(
+            'CONTROLE DE PERMUTAÇÃO ATIVO (semente %d): %d rótulos redistribuídos. '
+            'Acurácia acima do acaso aqui indica vazamento no arcabouço.',
+            self.settings.permutation_seed, len(labels))
+        return shuffled[:first], shuffled[first:second], shuffled[second:]
+
     def _finalize(
         self,
         train: list[Item],
@@ -352,6 +395,9 @@ class FeatureAdjustmentSubsystem:
             raise RuntimeError(
                 'Conjunto de treino vazio. Verifique se o pré-processamento foi executado '
                 'e se num_speakers e num_utterances correspondem às features em disco.')
+
+        if self.settings.permute_labels:
+            train, validation, test = self._permute_labels(train, validation, test)
 
         # Garantia 2: o comprimento comum é o máximo do TREINO, nunca do conjunto todo.
         num_frames = max(matrix.shape[1] for matrix, _ in train)

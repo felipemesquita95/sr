@@ -40,6 +40,9 @@ def parse_arguments() -> argparse.Namespace:
         '--preprocess-only', action='store_true',
         help='Executa apenas o pré-processamento e encerra.')
     parser.add_argument(
+        '--permute-labels', action='store_true',
+        help='Controle negativo: embaralha os rótulos. A acurácia deve cair ao acaso.')
+    parser.add_argument(
         '--quiet', '-q', action='store_true',
         help='Reduz o log a avisos e erros.')
     return parser.parse_args()
@@ -66,9 +69,13 @@ def main() -> int:
         logging.error('%s', error)
         return 1
 
-    if arguments.preprocess_only:
+    if arguments.preprocess_only or arguments.permute_labels:
         from dataclasses import replace
-        settings = replace(settings, preprocess_only=True)
+        settings = replace(
+            settings,
+            preprocess_only=settings.preprocess_only or arguments.preprocess_only,
+            permute_labels=settings.permute_labels or arguments.permute_labels,
+        )
 
     SpeakerRecognitionSystem(settings).run()
     return 0

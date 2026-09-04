@@ -56,8 +56,27 @@ class PreprocessingSubsystem:
         Gravações já processadas são detectadas pela presença do arquivo de saída e
         puladas, de modo que a execução é retomável — relevante para o VCTK, cujo
         pré-processamento completo leva horas.
+
+        Quando o corpus não está mais em disco mas as features estão, a etapa é
+        dispensada em vez de falhar. O VCTK é ingerido apagando cada áudio logo após
+        convertê-lo, porque o corpus não cabe em disco junto do próprio zip; exigir a
+        forma de onda para treinar sobre features já extraídas tornaria o resultado
+        irreprodutível justamente na máquina onde ele foi obtido.
+
+        Raises:
+            FileNotFoundError: Se nem o corpus nem as features existirem.
         """
-        recordings = build_index(self.settings)
+        try:
+            recordings = build_index(self.settings)
+        except FileNotFoundError:
+            if not self._features_present():
+                raise
+            logger.warning(
+                'Corpus indisponível em %s; usando as features já extraídas em %s. '
+                'Nenhuma gravação será reprocessada.',
+                self.settings.vctk_root or self.settings.audio_path,
+                self.settings.features_path)
+            return
         logger.info('Pré-processando %d gravações para %s.',
                     len(recordings), self.settings.features_path)
 
@@ -66,6 +85,16 @@ class PreprocessingSubsystem:
         logger.info('Pré-processamento concluído: %d processadas, %d já existiam.',
                     processed, skipped)
         self._write_summary_figures()
+
+    def _features_present(self) -> bool:
+        """Indica se há features do primeiro locutor já gravadas em disco.
+
+        A verificação é deliberadamente barata e local: basta uma evidência de que a
+        extração já ocorreu para esta configuração. Conferir o conjunto inteiro
+        custaria uma varredura de dezenas de milhares de diretórios, e a montagem dos
+        tensores logo adiante já falha, com mensagem própria, se faltar material.
+        """
+        return (self.settings.features_path / '1').is_dir()
 
     def process(self, recordings: Sequence[Recording]) -> tuple[int, int]:
         """Aplica a cadeia a uma lista explícita de gravações, já numeradas.

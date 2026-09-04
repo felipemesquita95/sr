@@ -40,13 +40,15 @@ class TrainingSubsystem:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def train(self, architecture: str, split: DataSplit, output: Path) -> tuple[Model, object]:
+    def train(self, architecture: str, split: DataSplit, output: Path,
+              fold: int = 1) -> tuple[Model, object]:
         """Treina uma arquitetura sobre uma partição.
 
         Args:
             architecture: Nome da arquitetura, conforme o registro de modelos.
             split: Conjuntos de treino, validação e teste já normalizados.
             output: Diretório onde gravar o modelo e os artefatos de acompanhamento.
+            fold: Índice da partição, usado apenas para rotular os artefatos.
 
         Returns:
             O modelo treinado, com os pesos da melhor época restaurados, e o
@@ -66,7 +68,7 @@ class TrainingSubsystem:
             validation_data=(split.validation_x, split.validation_y),
             epochs=self.settings.epochs,
             batch_size=self.settings.batch_size,
-            callbacks=self._callbacks(architecture, split, output),
+            callbacks=self._callbacks(architecture, output, fold),
             verbose=2,
         )
 
@@ -74,7 +76,7 @@ class TrainingSubsystem:
         logger.info('Modelo gravado em %s', output / 'modelo.keras')
         return model, history
 
-    def _callbacks(self, architecture: str, split: DataSplit, output: Path) -> list:
+    def _callbacks(self, architecture: str, output: Path, fold: int) -> list:
         """Monta a lista de callbacks do treino.
 
         A parada antecipada monitora a acurácia de validação e restaura os pesos da
@@ -83,14 +85,13 @@ class TrainingSubsystem:
 
         Args:
             architecture: Nome da arquitetura, usado nos artefatos de acompanhamento.
-            split: Partição em treino, para extrair o índice da partição.
             output: Diretório dos artefatos.
+            fold: Índice da partição.
 
         Returns:
             Lista de callbacks do Keras.
         """
         patience = self.settings.early_stopping_patience
-        fold = getattr(split, 'fold', 1)
 
         return [
             ReduceLROnPlateau(

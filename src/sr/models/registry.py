@@ -15,15 +15,26 @@ from keras import Model
 from keras.optimizers import Adam
 
 from sr.models.attention import build_attention_model
-from sr.models.convolutional import build_cepstral_cnn, build_temporal_cnn
+from sr.models.convolutional import (build_cepstral_cnn, build_temporal_cnn,
+                                     build_temporal_cnn_statistics)
+from sr.models.tdnn import build_attentive_xvector, build_xvector
 
 logger = logging.getLogger(__name__)
 
 #: Arquiteturas disponíveis, mapeadas pelo nome usado nos perfis de configuração.
+#:
+#: As entradas formam três pares de ablação, e não uma coleção solta de modelos:
+#: ``cnn`` contra ``temporal_cnn`` isola o eixo da convolução; ``temporal_cnn``
+#: contra ``temporal_cnn_stats`` isola a agregação; ``xvector`` contra
+#: ``xvector_attentive`` isola a ponderação dos quadros. Comparações assim atribuem a
+#: diferença observada a uma causa; uma tabela de modelos arbitrários, não.
 ARCHITECTURES: dict[str, Callable[..., Model]] = {
     'cnn': build_cepstral_cnn,
     'temporal_cnn': build_temporal_cnn,
+    'temporal_cnn_stats': build_temporal_cnn_statistics,
     'attention': build_attention_model,
+    'xvector': build_xvector,
+    'xvector_attentive': build_attentive_xvector,
 }
 
 

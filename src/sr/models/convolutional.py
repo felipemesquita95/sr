@@ -30,6 +30,8 @@ from keras.layers import (Conv1D, Dense, Dropout, Flatten, GlobalAveragePooling1
                           Input, MaxPooling1D, Permute)
 from keras.regularizers import l2
 
+from sr.models.pooling import StatisticsPooling
+
 
 def build_cepstral_cnn(
     input_shape: tuple[int, ...],
@@ -91,8 +93,9 @@ def build_temporal_cnn(
     dense_activation: str = 'tanh',
     dense_l2: float = 0.04,
     dense_dropout: float = 0.3,
+    pooling: str = 'average',
 ) -> Sequential:
-    """Constrói a CNN que convolui ao longo do tempo, com agregação por média global.
+    """Constrói a CNN que convolui ao longo do tempo, com agregação configurável.
 
     A transposição inicial coloca os quadros no eixo da convolução e os coeficientes
     como canais, de modo que os filtros são compartilhados ao longo do tempo. A
@@ -119,10 +122,20 @@ def build_temporal_cnn(
         dense_activation: Função de ativação da camada densa.
         dense_l2: Coeficiente de regularização L2 da camada densa.
         dense_dropout: Fração de dropout após a camada densa.
+        pooling: Agregação temporal. ``'average'`` reduz cada canal à sua média;
+            ``'statistics'`` concatena média e desvio, recuperando a dispersão que a
+            média descarta. Trocar apenas este argumento isola a agregação como única
+            variável, o que torna a comparação entre as duas uma ablação.
 
     Returns:
         Modelo compilado, pronto para treino.
+
+    Raises:
+        ValueError: Se a agregação pedida for desconhecida.
     """
+    if pooling not in ('average', 'statistics'):
+        raise ValueError(f'Agregação desconhecida: {pooling!r}. Use "average" ou "statistics".')
+
     layers = [
         Input(shape=input_shape),
         Permute((2, 1)),  # (num_mfccs, quadros) -> (quadros, num_mfccs)
@@ -133,9 +146,27 @@ def build_temporal_cnn(
         layers.append(MaxPooling1D(pool_size))
 
     layers += [
-        GlobalAveragePooling1D(),
+        GlobalAveragePooling1D() if pooling == 'average' else StatisticsPooling(),
         Dense(dense_units, activation=dense_activation, kernel_regularizer=l2(dense_l2)),
         Dropout(dense_dropout),
         Dense(num_classes, activation='softmax'),
     ]
-    return Sequential(layers, name='temporal_cnn')
+    return Sequential(layers, name=f'temporal_cnn_{pooling}')
+
+
+def build_temporal_cnn_statistics(input_shape: tuple[int, ...], num_classes: int, **kwargs):
+    """CNN temporal agregando por média **e** desvio, em vez de só pela média.
+
+    Difere de :func:`build_temporal_cnn` por uma única camada. A comparação entre as
+    duas responde a uma pergunta específica: quanto da identidade do locutor está na
+    variabilidade das características ao longo da fala, e não no seu valor médio.
+
+    Args:
+        input_shape: Forma de uma amostra.
+        num_classes: Número de locutores.
+        **kwargs: Repassados a :func:`build_temporal_cnn`.
+
+    Returns:
+        Modelo pronto para compilação.
+    """
+    return build_temporal_cnn(input_shape, num_classes, pooling='statistics', **kwargs)

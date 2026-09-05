@@ -51,6 +51,8 @@ class DataSplit:
         validation_y: Rótulos de validação.
         test_x: Tensor de teste, usado somente na avaliação final.
         test_y: Rótulos de teste.
+        normalization_mean: Média por coeficiente estimada no treino, quando disponível.
+        normalization_std: Desvio do treino com estabilizador, quando disponível.
     """
 
     train_x: np.ndarray
@@ -59,6 +61,8 @@ class DataSplit:
     validation_y: np.ndarray
     test_x: np.ndarray
     test_y: np.ndarray
+    normalization_mean: np.ndarray | None = None
+    normalization_std: np.ndarray | None = None
 
     @property
     def input_shape(self) -> tuple[int, ...]:
@@ -74,6 +78,46 @@ class DataSplit:
 
 #: Um item ainda não alinhado: a matriz de MFCCs e o rótulo do seu locutor.
 Item = tuple[np.ndarray, int]
+
+RecordingKey = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class PairedPartition:
+    """Papéis dos enunciados, compartilhados por ambas as capturas e todos os treinos.
+
+    As chaves são ``(locutor, enunciado)`` com índices base um. A semente governa
+    apenas esta divisão; nenhuma semente de inicialização da rede entra aqui.
+    """
+
+    train: tuple[RecordingKey, ...]
+    validation: tuple[RecordingKey, ...]
+    test: tuple[RecordingKey, ...]
+    seed: int
+
+    def __post_init__(self) -> None:
+        groups = [set(self.train), set(self.validation), set(self.test)]
+        if any(not group for group in groups):
+            raise ValueError('A divisão pareada exige treino, validação e teste não vazios.')
+        if any(len(keys) != len(group) for keys, group in
+               zip((self.train, self.validation, self.test), groups)):
+            raise ValueError('Enunciado duplicado na divisão pareada.')
+        if groups[0] & groups[1] or groups[0] & groups[2] or groups[1] & groups[2]:
+            raise ValueError('Os papéis da divisão pareada devem ser disjuntos.')
+
+
+@dataclass(frozen=True)
+class PairedDataSplit:
+    """Um treino de origem e dois testes sobre a mesma lista de gravações.
+
+    ``source`` contém treino, validação e teste da origem. O teste de destino
+    recebe exatamente o comprimento, a média e o desvio estimados nesse treino.
+    """
+
+    source: DataSplit
+    target_test_x: np.ndarray
+    target_test_y: np.ndarray
+    partition: PairedPartition
 
 
 class FeatureAdjustmentSubsystem:
@@ -354,6 +398,71 @@ class FeatureAdjustmentSubsystem:
     # Alinhamento, montagem e normalização
     # ------------------------------------------------------------------
 
+    def paired_partition(
+        self,
+        first: dict[RecordingKey, np.ndarray],
+        second: dict[RecordingKey, np.ndarray],
+        *,
+        seed: int,
+        test_fraction: float = 0.2,
+        validation_per_speaker: int = 10,
+    ) -> PairedPartition:
+        """Reserva os mesmos enunciados em ambas as trilhas, antes de qualquer treino.
+
+        Usa somente pares presentes nas duas capturas, em ordem canônica antes do
+        sorteio. Por locutor, reserva ``ceil(n * test_fraction)`` pares para teste,
+        depois a quantidade declarada para validação. Exige ao menos um par de
+        treino por classe; reduzir silenciosamente a validação mudaria a medida.
+        """
+        if not 0 < test_fraction < 1 or validation_per_speaker < 1:
+            raise ValueError('Fração de teste e quantidade de validação inválidas.')
+        shared = set(first) & set(second)
+        rng = np.random.default_rng(seed)
+        train, validation, test = [], [], []
+        for speaker in range(1, self.settings.num_speakers + 1):
+            keys = sorted(key for key in shared if key[0] == speaker)
+            n_test = math.ceil(len(keys) * test_fraction)
+            if len(keys) <= n_test + validation_per_speaker:
+                raise ValueError(f'Locutor {speaker} sem pares suficientes para os três papéis.')
+            order = rng.permutation(len(keys))
+            test.extend(keys[int(i)] for i in order[:n_test])
+            validation.extend(keys[int(i)] for i in
+                              order[n_test:n_test + validation_per_speaker])
+            train.extend(keys[int(i)] for i in order[n_test + validation_per_speaker:])
+        return PairedPartition(tuple(sorted(train)), tuple(sorted(validation)),
+                               tuple(sorted(test)), seed)
+
+    def prepare_paired_microphone(
+        self,
+        source: dict[RecordingKey, np.ndarray],
+        target: dict[RecordingKey, np.ndarray],
+        partition: PairedPartition,
+    ) -> PairedDataSplit:
+        """Monta uma linha da matriz, conservando as estatísticas da origem.
+
+        Os dois testes entram juntos na montagem para receber a mesma transformação.
+        A validação usa exclusivamente a origem. Não há novo sorteio nesta etapa,
+        nem seleção de enunciados em função da semente de treino.
+        """
+        if self.settings.permute_labels:
+            raise ValueError('A matriz pareada exige os rótulos verdadeiros.')
+        keys = set(partition.train + partition.validation + partition.test)
+        if not keys <= source.keys() or not keys <= target.keys():
+            raise ValueError('Todos os enunciados da divisão devem existir nas duas trilhas.')
+
+        def items(features, selected):
+            return [(features[key], key[0] - 1) for key in selected]
+
+        combined = self._finalize(
+            items(source, partition.train), items(source, partition.validation),
+            items(source, partition.test) + items(target, partition.test), label='mic pareado')
+        n_test = len(partition.test)
+        origin = DataSplit(
+            combined.train_x, combined.train_y, combined.validation_x, combined.validation_y,
+            combined.test_x[:n_test], combined.test_y[:n_test],
+            combined.normalization_mean, combined.normalization_std)
+        return PairedDataSplit(origin, combined.test_x[n_test:], combined.test_y[n_test:], partition)
+
     def _permute_labels(
         self,
         train: list[Item],
@@ -459,6 +568,6 @@ class FeatureAdjustmentSubsystem:
             tensor -= mean
             tensor /= std
 
-        split = DataSplit(train_x, train_y, validation_x, validation_y, test_x, test_y)
+        split = DataSplit(train_x, train_y, validation_x, validation_y, test_x, test_y, mean, std)
         logger.info('%s: %s', label, split.describe())
         return split

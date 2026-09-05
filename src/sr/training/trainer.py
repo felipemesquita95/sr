@@ -15,6 +15,7 @@ from pathlib import Path
 
 from keras import Model
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras.utils import set_random_seed
 
 from sr.config import Settings
 from sr.features import DataSplit
@@ -41,7 +42,7 @@ class TrainingSubsystem:
         self.settings = settings
 
     def train(self, architecture: str, split: DataSplit, output: Path,
-              fold: int = 1) -> tuple[Model, object]:
+              fold: int = 1, *, seed: int | None = None) -> tuple[Model, object]:
         """Treina uma arquitetura sobre uma partição.
 
         Args:
@@ -49,12 +50,17 @@ class TrainingSubsystem:
             split: Conjuntos de treino, validação e teste já normalizados.
             output: Diretório onde gravar o modelo e os artefatos de acompanhamento.
             fold: Índice da partição, usado apenas para rotular os artefatos.
+            seed: Semente de Python, NumPy e backend, aplicada antes de construir
+                a rede e embaralhar os lotes. Omitida, preserva os protocolos antigos.
 
         Returns:
             O modelo treinado, com os pesos da melhor época restaurados, e o
             histórico de treino devolvido pelo Keras.
         """
         output.mkdir(parents=True, exist_ok=True)
+
+        if seed is not None:
+            set_random_seed(seed)
 
         model = build_model(
             architecture,

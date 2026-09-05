@@ -86,9 +86,16 @@ def read_speaker_info(path: Path) -> dict[str, dict[str, str]]:
     speakers: dict[str, dict[str, str]] = {}
     for line in path.read_text(encoding='utf-8').splitlines():
         fields = line.split()
-        if len(fields) < 4 or not fields[0].isdigit():
+        if len(fields) < 4 or fields[0].upper() == 'ID':
             continue
-        speakers[f'p{fields[0]}'] = {
+        # O arquivo do corpus identifica os locutores como ``p225`` e ``s5``; espelhos
+        # de terceiros costumam gravar apenas o número. Aceitar as duas formas evita
+        # que a origem do arquivo mude silenciosamente quem entra na análise — foi
+        # assim que o locutor s5 ficou de fora de uma execução anterior.
+        identifier = fields[0] if not fields[0].isdigit() else f'p{fields[0]}'
+        if not fields[1].isdigit():
+            continue
+        speakers[identifier] = {
             'idade': fields[1],
             'genero': fields[2],
             'sotaque': fields[3],
@@ -332,9 +339,10 @@ def write_report(
         'vozes parecidas — que tendem a estar no mesmo grupo. A medida não separa as',
         'duas hipóteses; ela apenas descarta a primeira quando o excesso é nulo.',
         '',
-        'Procedência dos metadados: speaker-info.txt do VCTK 0.92, obtido de um espelho',
-        'público por o corpus ter sido apagado do disco após a ingestão. Cobre 107 dos',
-        '108 locutores; o locutor s5 não consta e foi excluído em vez de imputado.',
+        'Procedência dos metadados: speaker-info.txt extraído do zip oficial do VCTK',
+        '0.92. Cobre os 108 locutores do experimento. O próprio arquivo registra que',
+        'p280 e p315 não possuem trilha mic2, que é a razão de a numeração ser definida',
+        'sobre a interseção e de serem 108 locutores, e não 110.',
     ]
 
     (output / 'estrutura_erros.txt').write_text('\n'.join(lines) + '\n')

@@ -17,6 +17,18 @@ from sr.config.settings import Settings, _as_bool, _as_path_list, _validate, loa
 CONFIGS = Path(__file__).resolve().parent.parent / 'configs'
 
 
+def test_environment_overrides_fields_missing_from_profile(tmp_path, monkeypatch):
+    profile = tmp_path / 'minimal.env'
+    profile.write_text('NUM_SPEAKERS=3\n')
+    monkeypatch.setenv('MAX_FOLDS', '2')
+    monkeypatch.setenv('EPOCHS', '7')
+    monkeypatch.setenv('ARCHITECTURES', 'temporal_cnn')
+    settings = load_settings(profile)
+    assert settings.max_folds == 2
+    assert settings.epochs == 7
+    assert settings.architectures == ('temporal_cnn',)
+
+
 # ----------------------------------------------------------------------
 # Propriedades derivadas
 # ----------------------------------------------------------------------

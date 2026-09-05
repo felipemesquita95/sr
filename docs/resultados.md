@@ -1,5 +1,11 @@
 # Resultados
 
+> **Atualização em 04/09/2026:** este documento preserva os resultados históricos.
+> O cross-microfone abaixo foi comprometido pelo deslocamento de rótulos descrito
+> em `EXPERIMENTOS.md`; não sustenta as conclusões originais de “voz isolada”.
+> Para os artefatos da implementação atual e sua interpretação, consulte
+> [`avaliacao_atual.md`](avaliacao_atual.md) ou a interface em `ui/`.
+
 Todos os números são acurácia média sobre as partições da validação cruzada, com
 desvio entre partições. O nível do acaso é 1/*N*, onde *N* é o número de locutores.
 

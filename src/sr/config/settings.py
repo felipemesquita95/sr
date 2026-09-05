@@ -110,6 +110,21 @@ class Settings:
     features_path_test: Path | None = None
     #: Enunciados por locutor reservados para validação no protocolo cross-mic.
     cross_mic_validation_per_speaker: int = 10
+    #: Exige que o teste use enunciados que o treino nunca viu, no protocolo cross-mic.
+    #:
+    #: Sem isso, o protocolo troca o transdutor mas mantém o texto: a mesma frase da
+    #: mesma pessoa, no mesmo instante, está no treino (uma trilha) e no teste (a
+    #: outra). No VCTK isso é um atalho real, porque cada locutor lê um conjunto
+    #: **diferente** de sentenças de jornal — só a *rainbow passage* e o parágrafo de
+    #: elicitação são comuns a todos. O texto fica correlacionado ao rótulo, e MFCC
+    #: codifica conteúdo fonético, de modo que reconhecer a frase é um atalho válido
+    #: para reconhecer o locutor.
+    #:
+    #: Ativado, o conjunto de enunciados é cortado ao meio por locutor: a primeira
+    #: metade treina na trilha de origem, a segunda testa na trilha de destino. Troca
+    #: o transdutor **e** o texto de uma vez. A diferença entre os dois modos é o
+    #: tamanho do atalho lexical.
+    cross_mic_disjoint_utterances: bool = False
     #: Ativa o protocolo multi-microfone (treina com todos, particionando por enunciado).
     both_mics: bool = False
     #: Diretórios de features a combinar no protocolo multi-microfone.
@@ -248,7 +263,7 @@ def load_settings(config_path: str | os.PathLike | None = None) -> Settings:
 
     raw: dict[str, str] = {k: v for k, v in dotenv_values(path).items() if v is not None}
     # O ambiente do processo tem precedência sobre o arquivo.
-    for key in list(raw):
+    for key in (f.name.upper() for f in fields(Settings)):
         if key in os.environ:
             raw[key] = os.environ[key]
 

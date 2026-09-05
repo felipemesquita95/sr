@@ -219,6 +219,29 @@ class FeatureAdjustmentSubsystem:
     # Protocolo 2: treino em um microfone, avaliação em outro
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _split_utterances(
+        train_utterances: list[int],
+        test_utterances: list[int],
+    ) -> tuple[list[int], list[int]]:
+        """Divide os enunciados de um locutor em metades disjuntas entre as trilhas.
+
+        O corte é feito sobre a **interseção** das duas trilhas, e não sobre cada uma
+        isoladamente: se um enunciado existe só na trilha de treino, incluí-lo
+        deslocaria o ponto de corte entre elas e um mesmo enunciado poderia cair nos
+        dois lados. A ordem é a numérica, que é determinística e independe de sorteio.
+
+        Args:
+            train_utterances: Enunciados presentes na trilha de treino.
+            test_utterances: Enunciados presentes na trilha de teste.
+
+        Returns:
+            Par ``(treino, teste)`` sem enunciado em comum.
+        """
+        shared = sorted(set(train_utterances) & set(test_utterances))
+        middle = len(shared) // 2
+        return shared[:middle], shared[middle:]
+
     def prepare_cross_microphone(self) -> DataSplit:
         """Monta o protocolo cross-mic: treina em um microfone, avalia no outro.
 
@@ -249,6 +272,10 @@ class FeatureAdjustmentSubsystem:
                 u for u in range(1, settings.num_utterances + 1) if (speaker, u) in train_features)
             test_utterances = sorted(
                 u for u in range(1, settings.num_utterances + 1) if (speaker, u) in test_features)
+
+            if settings.cross_mic_disjoint_utterances:
+                train_utterances, test_utterances = self._split_utterances(
+                    train_utterances, test_utterances)
 
             # A validação sai do microfone de treino: medir a época ótima no microfone
             # de teste seria selecionar o modelo pelo próprio efeito sob investigação.

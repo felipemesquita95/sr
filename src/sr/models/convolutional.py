@@ -170,3 +170,30 @@ def build_temporal_cnn_statistics(input_shape: tuple[int, ...], num_classes: int
         Modelo pronto para compilação.
     """
     return build_temporal_cnn(input_shape, num_classes, pooling='statistics', **kwargs)
+
+
+def build_temporal_cnn_wide(input_shape: tuple[int, ...], num_classes: int, **kwargs):
+    """A CNN temporal com quatro vezes mais filtros, e nada mais alterado.
+
+    Controle de capacidade. As medidas disponíveis mostram a ``temporal_cnn``, com
+    115 mil parâmetros, superando a ``cnn`` de 370 mil tanto dentro de um microfone
+    quanto atravessando os dois. A leitura natural é que o eixo da convolução importa
+    mais que o porte do modelo, mas as duas arquiteturas diferem em eixo **e** em
+    tamanho ao mesmo tempo, de modo que a comparação sozinha não sustenta a conclusão.
+
+    Esta variante alarga a rede vencedora sem mudar mais nada: mesmo eixo, mesma
+    profundidade, mesma agregação, mesmo kernel, mesma regularização. A única
+    diferença é o número de filtros por bloco. Se o desempenho não melhorar, a
+    capacidade fica descartada como explicação por evidência direta, e não por
+    inferência a partir de arquiteturas que diferem em vários eixos.
+
+    Args:
+        input_shape: Forma de uma amostra, ``(num_mfccs, num_quadros)``.
+        num_classes: Número de locutores.
+        **kwargs: Repassados a :func:`build_temporal_cnn`; ``conv_filters`` é fixado.
+
+    Returns:
+        Modelo compilado, pronto para treino.
+    """
+    kwargs.pop('conv_filters', None)
+    return build_temporal_cnn(input_shape, num_classes, conv_filters=(256, 512), **kwargs)

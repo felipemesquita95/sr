@@ -14,10 +14,12 @@ from typing import Callable
 from keras import Model
 from keras.optimizers import Adam
 
-from sr.models.attention import build_attention_model
+from sr.models.attention import build_attention_model, build_temporal_attention
 from sr.models.convolutional import (build_cepstral_cnn, build_temporal_cnn,
-                                     build_temporal_cnn_statistics)
-from sr.models.tdnn import build_attentive_xvector, build_xvector
+                                     build_temporal_cnn_statistics,
+                                     build_temporal_cnn_wide)
+from sr.models.tdnn import (build_attentive_xvector, build_temporal_resnet,
+                            build_xvector)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ ARCHITECTURES: dict[str, Callable[..., Model]] = {
     'attention': build_attention_model,
     'xvector': build_xvector,
     'xvector_attentive': build_attentive_xvector,
+    'temporal_attention': build_temporal_attention,
+    'temporal_cnn_wide': build_temporal_cnn_wide,
+    'temporal_resnet': build_temporal_resnet,
 }
 
 

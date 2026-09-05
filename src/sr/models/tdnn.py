@@ -28,8 +28,9 @@ descrevem a voz. A arquitetura é mais capaz, não mais honesta.
 
 from __future__ import annotations
 
-from keras import Sequential
-from keras.layers import BatchNormalization, Conv1D, Dense, Dropout, Input, Permute
+from keras import Model, Sequential
+from keras.layers import (Activation, Add, BatchNormalization, Conv1D, Dense, Dropout,
+                          Input, Permute)
 from keras.regularizers import l2
 
 from sr.models.pooling import AttentiveStatisticsPooling, StatisticsPooling
@@ -118,3 +119,80 @@ def build_attentive_xvector(input_shape: tuple[int, ...], num_classes: int, **kw
         Modelo pronto para compilação.
     """
     return build_xvector(input_shape, num_classes, attentive=True, **kwargs)
+
+
+#: Dilatações dos blocos residuais, dobrando o campo receptivo a cada bloco.
+RESIDUAL_DILATIONS = (1, 2, 4, 8)
+
+
+def build_temporal_resnet(
+    input_shape: tuple[int, ...],
+    num_classes: int,
+    filters: int = 512,
+    kernel_size: int = 3,
+    dilations: tuple[int, ...] = RESIDUAL_DILATIONS,
+    embedding_units: int = 256,
+    dropout: float = 0.2,
+    dense_l2: float = 0.01,
+) -> Model:
+    """Rede residual dilatada sobre o tempo — a maior arquitetura do projeto.
+
+    As seis arquiteturas anteriores cobrem uma faixa de 115 mil a 1,6 milhão de
+    parâmetros e parecem convergir para o mesmo patamar quando o microfone muda. Duas
+    explicações produzem esse padrão: ou a barreira é do dado, e nenhum modelo a
+    atravessa, ou a faixa de capacidade explorada é estreita demais para revelar
+    diferença. Esta arquitetura amplia a faixa por dentro, antes de recorrer a um
+    modelo pré-treinado externo.
+
+    O desenho segue o que a área adotou depois do x-vector: profundidade com conexões
+    residuais e dilatações que dobram, de modo que o campo receptivo cresce
+    exponencialmente com a profundidade enquanto o número de parâmetros cresce
+    linearmente. Cada bloco normaliza, convolui e soma a entrada; a projeção de
+    entrada existe para que a primeira soma seja dimensionalmente possível.
+
+    A agregação continua sendo média e desvio, e a escolha é deliberada: mantém esta
+    arquitetura comparável à ``temporal_cnn_stats``, ao ``xvector`` e à
+    ``temporal_attention``, isolando profundidade como a variável que muda.
+
+    Vale repetir aqui a ressalva registrada para o x-vector, porque ela se aplica com
+    mais força a um modelo maior: média e desvio de um trecho sem fala descrevem o
+    canal tão bem quanto descrevem a voz. Profundidade torna a rede mais capaz de
+    encontrar qualquer pista que exista, inclusive a que este trabalho quer expor.
+
+    Args:
+        input_shape: Forma de uma amostra, ``(num_mfccs, num_quadros)``.
+        num_classes: Número de locutores.
+        filters: Canais de cada bloco residual.
+        kernel_size: Extensão do kernel, em quadros.
+        dilations: Dilatação de cada bloco, em ordem.
+        embedding_units: Unidades da camada de embedding após a agregação.
+        dropout: Fração de dropout antes da camada de saída.
+        dense_l2: Coeficiente de regularização L2 da camada de embedding.
+
+    Returns:
+        Modelo compilado, pronto para treino.
+    """
+    inputs = Input(shape=input_shape)
+    x = Permute((2, 1))(inputs)
+    x = Conv1D(filters, 1, padding='same')(x)
+
+    for dilation in dilations:
+        residual = x
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        x = Conv1D(filters, kernel_size, padding='same', dilation_rate=dilation,
+                   kernel_regularizer=l2(dense_l2 / 10))(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        x = Conv1D(filters, kernel_size, padding='same', dilation_rate=dilation,
+                   kernel_regularizer=l2(dense_l2 / 10))(x)
+        x = Add()([residual, x])
+
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = StatisticsPooling()(x)
+    x = Dense(embedding_units, activation='relu', kernel_regularizer=l2(dense_l2))(x)
+    x = Dropout(dropout)(x)
+    outputs = Dense(num_classes, activation='softmax')(x)
+
+    return Model(inputs, outputs, name='temporal_resnet')

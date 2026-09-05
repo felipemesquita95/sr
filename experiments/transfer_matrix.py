@@ -55,6 +55,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 
 from sr.config import Settings, load_settings  # noqa: E402
 from sr.features import FeatureAdjustmentSubsystem  # noqa: E402
+from sr.models import ARCHITECTURES  # noqa: E402
 
 SPLIT_SEED = 42
 TRAINING_SEEDS = (17, 29, 43)
@@ -169,7 +170,8 @@ def write_report(runs: list[dict], output: Path, num_speakers: int) -> None:
     plt.close(figure)
 
 
-def evaluate_origin(training, paired, source: str, output: Path, num_speakers: int) -> list[dict]:
+def evaluate_origin(training, paired, source: str, output: Path, num_speakers: int,
+                    architecture: str) -> list[dict]:
     """Faz três ajustes de uma origem, avaliando cada checkpoint nas duas capturas."""
     from keras import backend
     from sr.evaluation import evaluate_model
@@ -185,8 +187,8 @@ def evaluate_origin(training, paired, source: str, output: Path, num_speakers: i
                  std=split.normalization_std, num_frames=split.input_shape[1])
         write_json(directory / 'ajuste.json', {'origem': source, 'validacao': source,
                    'semente_treino': seed, 'semente_divisao': paired.partition.seed,
-                   'arquitetura': 'cnn', 'input_shape': split.input_shape})
-        model, history = training.train('cnn', split, directory, seed=seed)
+                   'arquitetura': architecture, 'input_shape': split.input_shape})
+        model, history = training.train(architecture, split, directory, seed=seed)
         (directory / 'modelo.json').write_text(model.to_json(), encoding='utf-8')
         write_json(directory / 'historico.json', history.history)
         results = {
@@ -225,8 +227,16 @@ def run_matrix(settings: Settings, output: Path, manifesto: Path) -> None:
 
     if keras.backend.backend() != 'torch':
         raise ValueError('Este instrumento exige KERAS_BACKEND=torch.')
-    if settings.architectures != ('cnn',) or settings.permute_labels:
-        raise ValueError('A matriz exige ARCHITECTURES=cnn e rótulos verdadeiros.')
+    if len(settings.architectures) != 1 or settings.permute_labels:
+        raise ValueError(
+            'A matriz exige exatamente uma arquitetura em ARCHITECTURES e rótulos '
+            'verdadeiros. Uma arquitetura por execução, em saídas separadas: a medida '
+            'é a perda de transferência daquele instrumento, e não uma competição '
+            'entre arquiteturas decidida no conjunto de teste.')
+    if settings.architectures[0] not in ARCHITECTURES:
+        raise ValueError(
+            f'Arquitetura desconhecida: {settings.architectures[0]!r}. '
+            f'Disponíveis: {", ".join(sorted(ARCHITECTURES))}.')
     paths = (settings.features_path_train, settings.features_path_test)
     if any(path is None for path in paths) or paths[0].resolve() == paths[1].resolve():
         raise ValueError('Declare diretórios distintos para mic1 e mic2, nessa ordem.')
@@ -285,7 +295,7 @@ def run_matrix(settings: Settings, output: Path, manifesto: Path) -> None:
         target = next(mic for mic in MICROPHONES if mic != source)
         paired = adjustment.prepare_paired_microphone(features[source], features[target], partition)
         runs.extend(evaluate_origin(TrainingSubsystem(settings), paired, source, output,
-                                    settings.num_speakers))
+                                    settings.num_speakers, settings.architectures[0]))
         del paired
         gc.collect()
     write_report(runs, output, settings.num_speakers)

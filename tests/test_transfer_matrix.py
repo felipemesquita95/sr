@@ -157,7 +157,7 @@ def test_training_seeds_never_change_partition_and_each_checkpoint_is_evaluated_
     for index, source in enumerate(MICROPHONES):
         paired = adjustment.prepare_paired_microphone(
             paired_features[index], paired_features[1 - index], partition)
-        runs.extend(evaluate_origin(InstrumentTrainer(), paired, source, tmp_path, 3))
+        runs.extend(evaluate_origin(InstrumentTrainer(), paired, source, tmp_path, 3, 'cnn'))
     assert len(fits) == 6
     assert [fit[3] for fit in fits] == list(TRAINING_SEEDS) * 2
     for start in (0, 3):
@@ -235,7 +235,7 @@ def test_execution_persists_fixed_design_and_refuses_to_mix_artifacts(
         'enunciados': {f'p{s}': {str(u): str(u) for u in range(1, 31)} for s in range(1, 4)}}))
     calls = []
 
-    def evaluate(training, paired, source, output, num_speakers):
+    def evaluate(training, paired, source, output, num_speakers, architecture):
         calls.append((source, paired.partition))
         assert (output / 'configuracao.json').is_file()
         assert (output / 'divisao.json').is_file()

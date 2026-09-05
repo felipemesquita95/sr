@@ -87,6 +87,21 @@ interseção entre as trilhas, de modo que o índice `(locutor, enunciado)` desi
 mesma pessoa dizendo a mesma frase em qualquer microfone — condição sem a qual o
 protocolo cross-mic não mede o que afirma medir.
 
+## Interface de inspeção
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python ui/app.py
+```
+
+Aplicativo desktop Python/PySide6, com janela própria, navegação lateral, busca
+de locutor, zoom nos gráficos e carregamento em segundo plano. O atalho
+`python3 abrir_ui.py` também abre a interface usando o ambiente virtual do projeto.
+As páginas percorrem `runs/`, comparam protocolos e permitem acompanhar ou
+interromper treinos. Consulte [`ui/README.md`](ui/README.md) e a
+[`avaliação dos resultados atuais`](docs/avaliacao_atual.md), que distingue as
+métricas presentes em disco dos números históricos da documentação.
+
 ## Testes
 
 ```bash

@@ -6,3 +6,4 @@
 #   python -m pytest
 
 pytest>=8.0
+PySide6-Essentials>=6.8,<7

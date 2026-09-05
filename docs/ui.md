@@ -1,6 +1,6 @@
 # Interface de inspeção do pipeline — especificação
 
-Documento de implementação. Descreve uma aplicação que torna **visível cada etapa**
+Documento da implementação. Descreve uma aplicação que torna **visível cada etapa**
 do sistema, do áudio bruto até a rede treinada, para que o processo possa ser
 percorrido e discutido em vez de descrito.
 
@@ -17,28 +17,29 @@ Destino: diretório `ui/` na raiz do repositório.
 | decisão | escolha | motivo |
 |---|---|---|
 | Linguagem | Python 3.13 | mesma do sistema; reaproveita `src/sr` diretamente |
-| Framework | **Tkinter** (`ttk.Notebook`) | aplicação de desktop, em janela própria, sem navegador e sem servidor. Faz parte da biblioteca padrão — nenhuma dependência nova |
-| Gráficos | matplotlib com backend `TkAgg`, via `FigureCanvasTkAgg` | as figuras que o projeto já sabe gerar são embutidas direto nos painéis |
+| Framework | **PySide6-Essentials** (Qt Widgets) | janela de desktop com navegação lateral e páginas em `QStackedWidget`; qualidade visual e widgets prontos |
+| Gráficos | matplotlib com `backend_qtagg`, via `FigureCanvasQTAgg` | figuras embutidas nos painéis com barra de zoom, deslocamento e exportação |
 | Execução | `.venv/bin/python ui/app.py` | é uma ferramenta de inspeção, não um serviço |
 | Fonte dos dados | `runs/` | nada é reprocessado do corpus (ver §2) |
 | Idioma da interface | português | mesma convenção do restante do projeto |
 
-**Nenhuma dependência nova.** `tkinter` é biblioteca padrão e `matplotlib` já é
-dependência do sistema. Verificado nesta máquina: Tk 8.6, backend `TkAgg` importa,
-`DISPLAY=:0`.
+**Custo aceito: 233 MB de dependência adicional** com PySide6-Essentials, declarada
+em `requirements-dev.txt`. Tkinter não teria esse custo; a escolha por Qt foi
+aceita pela qualidade visual e pelos widgets prontos. `matplotlib` já é
+dependência do sistema.
 
 > Não usar Streamlit, Dash, Gradio, Flask ou qualquer coisa que sirva página em
 > navegador. A interface tem de abrir em janela própria. Esta é uma decisão de
 > projeto, não uma preferência de implementação.
 
 > **Backend do Keras.** A aplicação precisa de `KERAS_BACKEND=torch` no ambiente
-> antes de qualquer import de `keras`. Definir em `ui/app.py`, na primeira linha
-> executável, com `os.environ.setdefault('KERAS_BACKEND', 'torch')`.
+> antes de qualquer import de `keras`. `ui/app.py` o define logo após importar
+> `os`, com `os.environ.setdefault('KERAS_BACKEND', 'torch')`.
 
-> **Backend do matplotlib.** Definir `matplotlib.use('TkAgg')` antes de importar
-> `pyplot`, também em `ui/app.py`. O sistema fixa `Agg` nos seus próprios módulos de
-> visualização, que gravam em arquivo; a interface precisa do outro backend para
-> desenhar na tela.
+> **Backend do matplotlib.** `ui/figuras.py` instancia `Figure` e
+> `FigureCanvasQTAgg` diretamente de `backend_qtagg`, sem usar `pyplot` nem trocar
+> seu backend global. `ui/app.py` define `QT_API=pyside6` por padrão. Os módulos do
+> sistema que gravam figuras continuam usando `Agg`.
 
 ---
 
@@ -133,14 +134,23 @@ listar os diretórios.
 
 ## 4. Barra de seleção — persistente
 
-Uma faixa fixa no topo da janela, **fora** do `ttk.Notebook`, de modo que continue
-visível ao trocar de aba e defina o que todas elas mostram.
+Uma faixa fixa no topo da janela, **fora** do `QStackedWidget`, continua visível ao
+trocar de página. Uma `QListWidget` lateral determina a página visível.
 
-O estado vive em variáveis `tk.StringVar`/`tk.IntVar` de um único objeto de seleção,
-com observadores (`trace_add('write', ...)`) que avisam a aba visível para se
-redesenhar. Redesenhar **apenas a aba visível**, e não todas: montar dez painéis a
-cada troca de locutor deixa a interface lenta sem necessidade. As demais se
-atualizam ao serem exibidas, via `<<NotebookTabChanged>>`.
+`MainWindow.selection` guarda uma dataclass `Selection` congelada, com trilha,
+locutor, enunciado, inventário, manifesto e perfil. Os valores dos seletores ficam
+em `QComboBox.currentData()`; seus sinais `currentIndexChanged` recompõem a seleção.
+Durante o preenchimento dos combos, `blockSignals` evita atualizações intermediárias.
+Um `QTimer` de disparo único reúne mudanças próximas em uma atualização após 75 ms.
+
+Revisões da seleção e do inventário permitem descartar respostas antigas das
+tarefas assíncronas. Na carga das etapas, **só a página visível desenha widgets e
+figuras**: as demais guardam os dados recebidos até serem abertas. O acompanhamento
+do treino tem timer próprio e continua atualizando mesmo com sua página oculta.
+A chave de carregamento reúne seleção,
+revisão e parâmetros da página; voltar a uma página sem mudanças reaproveita seu
+conteúdo. `QSettings` persiste a geometria da janela, trilha, locutor e enunciado
+entre aberturas.
 
 1. **Corpus/trilha** — `vctk_mic1`, `vctk_mic2`, `vctknovad_mic1`,
    `vctknovad_mic2`, `brsd`. Lida do que existe em `runs/features/`, não fixa em
@@ -154,26 +164,29 @@ atualizam ao serem exibidas, via `<<NotebookTabChanged>>`.
    enunciado em 1–4, garantindo uma seleção que preenche todas as abas. É o botão a
    usar durante uma apresentação.
 
-Rodapé da faixa de seleção: contagem de locutores, de enunciados e de gravações com
-figuras na trilha corrente. Orienta sem precisar navegar.
+A faixa mostra o caminho da seleção e um indicador de figuras disponíveis. No
+rodapé lateral ficam as contagens de locutores e gravações da trilha; a tabela da
+visão geral detalha enunciados e cobertura de figuras por locutor.
 
 ---
 
 ## 5. As abas
 
-A ordem é a ordem do sinal. Cada aba abre com **uma frase** dizendo o que aquele
-estágio faz e por que ele existe — é essa frase que sustenta a conversa com o
+A ordem é a ordem do sinal. As abas são páginas persistentes acessadas pela lateral;
+treino e resultados têm páginas próprias. Cada página abre com **uma frase** dizendo
+o que aquele estágio faz e por que ele existe — é essa frase que sustenta a conversa com o
 orientador, não o gráfico.
 
 ### Aba 1 — Corpus
 
 Panorama, sem seleção. Responde "o que estamos olhando".
 
-- Cartões: número de locutores, enunciados por locutor, total de gravações, taxa de
-  amostragem de origem e alvo, e o **acaso** (1/*N*).
+- Cartões: número de locutores, total de gravações e **acaso** (1/*N*). A tabela
+  detalha enunciados e figuras por locutor; taxas aparecem nas etapas do sinal.
 - `_resumo/duracao.png` e `_resumo/enunciados_por_locutor.png` da trilha corrente.
 - Tabela do manifesto: índice → nome do corpus, com filtro por nome.
-- **Aviso de exclusão**, em destaque: `p280` e `p315` não possuem trilha `mic2`
+- **Aviso de exclusão**, em destaque, com os nomes lidos do manifesto. No VCTK,
+  `p280` e `p315` não possuem trilha `mic2`
   (problema técnico documentado no registro do corpus, nas gravações com o
   MKH 800). A numeração é definida sobre a interseção das trilhas, e por isso são
   108 locutores e não 110. É o defeito que invalidava o protocolo cross-microfone, e
@@ -183,11 +196,12 @@ Panorama, sem seleção. Responde "o que estamos olhando".
 
 - `sinal_original.png` — forma de onda no tempo.
 - `espectro_original.png` — espectro do sinal como veio do corpus.
-- Ficha: taxa de origem (48 kHz), duração em segundos, número de amostras.
+- Ficha: taxa de leitura declarada no perfil. Duração exata e número de amostras
+  são indicados como não persistidos, sem inferi-los dos MFCCs.
 
 ### Aba 3 — Detecção de atividade vocal
 
-- Lado a lado: `sinal_original.png` e `sinal_vad.png`.
+- Painéis de antes e depois: `sinal_original.png` e `sinal_vad.png`.
 - Texto do estágio: o VAD corta trechos abaixo de `VAD_TOP_DB` dB do pico.
 - **Ponto de discussão a deixar explícito na aba:** o VAD é aplicado a cada trilha
   isoladamente, com limiar relativo ao pico *daquela* trilha. Como os microfones
@@ -207,9 +221,9 @@ Panorama, sem seleção. Responde "o que estamos olhando".
 
 ### Aba 5 — Pré-ênfase
 
-- `espectro_preenfase.png`, preferencialmente sobreposto ao reamostrado para que o
-  ganho em alta frequência apareça como diferença e não como duas figuras a comparar
-  de memória.
+- `espectro_reamostrado.png` e `espectro_preenfase.png` em painéis separados. Não há
+  curvas numéricas persistidas para uma sobreposição fiel; a página orienta a
+  comparação das escalas das imagens.
 - Texto: filtro de primeira ordem, coeficiente 0,97, compensa a queda espectral
   natural da voz.
 
@@ -218,8 +232,8 @@ Panorama, sem seleção. Responde "o que estamos olhando".
 A primeira aba que funciona para **qualquer** enunciado, porque `mfccs.npy` sempre
 existe.
 
-- Mapa de calor da matriz, plotado ao vivo com
-  `sr.preprocessing.visualization.plot_mfccs`.
+- Mapa de calor da matriz, plotado ao vivo por `ui.figuras.mfcc`, com escala de cor
+  compartilhada ao comparar trilhas.
 - Ficha: forma da matriz (coeficientes × quadros), duração da janela, salto.
 - **Comparação entre trilhas**: mostrar a mesma gravação nas duas trilhas do mesmo
   perfil, lado a lado. É a demonstração mais direta de "mesma voz, mesma frase, mesmo
@@ -229,9 +243,9 @@ existe.
 
 - As três condições do `assinaturas.npz` (`silence`, `speech`, `full`) como três
   curvas de 80 valores — média e desvio de cada coeficiente cepstral.
-- Texto: se o locutor pode ser identificado a partir da condição `silence`, a pista
-  não está na voz.
-- Resultado já medido, exibido como tabela fixa (108 locutores, acaso 0,93%):
+- Aviso: baixa energia pode conter respiração ou fala fraca; o acerto indica pistas
+  residuais e não mede uma parcela causal de canal ou voz.
+- Resultado já medido, exibido a partir do relatório (108 locutores, acaso 0,93%):
 
   | condição | dentro da trilha | atravessando o microfone |
   |---|---|---|
@@ -241,7 +255,8 @@ existe.
 
   Ler de `runs/models/vctk_cross_mic/diagnostico_travessia/travessia_canal.json`, não
   fixar em código.
-- `runs/models/<exp>/diagnostico_travessia/travessia_canal.png` quando existir.
+- A página combina as curvas da seleção com a tabela lida do diagnóstico; não
+  embute o PNG de travessia.
 
 ### Aba 8 — Montagem dos tensores
 
@@ -253,11 +268,11 @@ O estágio que costuma ficar invisível e onde moram as garantias contra vazamen
   histograma de durações. Explicitar que o preenchimento **repete o conteúdo** em vez
   de inserir zeros, e que o comprimento comum sai do **máximo do treino**, nunca do
   conjunto todo.
-- **Partição**: diagrama da validação cruzada — os enunciados de cada locutor
-  distribuídos em 5 grupos por posição; na partição *k*, o grupo *k* vai para teste.
-  Marcar onde cai o enunciado selecionado.
-- **Normalização**: média e desvio por coeficiente, calculados **somente sobre o
-  treino**.
+- **Partição**: tabela dos grupos da validação cruzada, conforme o número de
+  partições do perfil; na partição *k*, o grupo *k* vai para teste. Um aviso indica
+  os destinos da seleção ou se ela não participa do perfil escolhido.
+- **Normalização**: média e desvio por coeficiente, calculados sob demanda em duas
+  passagens **somente sobre o treino**, sem alocar todos os tensores.
 - Cartões com os tamanhos reais dos três conjuntos no protocolo escolhido.
 
 ### Aba 9 — Protocolos
@@ -266,20 +281,19 @@ A aba que explica *por que* existem quatro perfis, antes de mostrar resultados.
 
 Cartões, um por protocolo, cada um dizendo o que mede e o que **não** controla:
 
-| protocolo | treino | teste | o que isola |
+| protocolo | treino | teste | o que mede |
 |---|---|---|---|
-| Intra-microfone | `mic1`, partições por enunciado | `mic1` | nada — voz e canal juntos |
-| Cross-microfone | `mic1` | `mic2` | voz, do modelo de microfone |
-| Multi-microfone | ambos, partição por enunciado | ambos | descorrelaciona canal e rótulo |
-| Permutação | rótulos embaralhados | — | o próprio arcabouço |
+| Intra-microfone | `mic1`, partições por enunciado | `mic1` | identificação em condições conhecidas, com voz e sessão associadas |
+| Cross-microfone | `mic1` | `mic2` | transferência entre transdutores, com sessão e enunciados compartilhados |
+| Multi-microfone | ambos, partição por enunciado | ambos | exposição a ambos os microfones, ainda com sessão compartilhada |
+| Permutação | rótulos embaralhados | — | controle negativo do arcabouço, sem provar ausência de todo vazamento |
 
 ### Aba 10 — Aprendizado profundo
 
-A aba final, e a que o orientador vai querer manipular.
+O trecho final da navegação tem duas páginas: arquiteturas e treino, e resultados.
 
-**Arquiteturas.** Cartão por rede, com o eixo da convolução, a agregação e a
-contagem de parâmetros (obter de `sr.models.build_model`, ao vivo, com a forma de
-entrada corrente — não fixar):
+**Arquiteturas.** Tabela com eixo, agregação e contagem de parâmetros obtida de
+`sr.models.build_model`, sob demanda, para a forma escolhida. Referência de contagens:
 
 | arquitetura | parâmetros | eixo | agregação |
 |---|---|---|---|
@@ -290,27 +304,30 @@ entrada corrente — não fixar):
 | `xvector_attentive` | 1.401.068 | tempo (TDNN) | estatísticas com atenção |
 | `attention` | 1.647.340 | coeficientes | `Flatten` |
 
-Incluir a nota de projeto: o eixo cepstral **não tem estrutura de vizinhança** —
-coeficientes adjacentes são projeções de bases distintas da DCT. Convolução
-pressupõe localidade; atenção é equivariante a permutação e não faz essa suposição.
-A escolha do eixo é objeto de estudo, não detalhe de implementação.
+A nota da página lembra que o eixo cepstral ordena bases da DCT e que atenção com
+viés posicional e `Flatten` não torna a rede completa invariante à ordem. A
+contagem é calculada sob demanda na CPU, para a forma escolhida no formulário;
+os números acima são referências, não valores fixados pela interface.
 
 **Disparar um treino.** Formulário: perfil (`configs/*.env`), arquitetura,
 número de partições, épocas. Ao confirmar, executa
 
 ```
-KERAS_BACKEND=torch SR_CONFIG=<perfil> ARCHITECTURES=<arq> MAX_FOLDS=<n> \
+KERAS_BACKEND=torch SR_CONFIG=<perfil> ARCHITECTURES=<arq> MAX_FOLDS=<n> EPOCHS=<épocas> \
   .venv/bin/python experiments/run_experiment.py
 ```
 
 como subprocesso, com a saída em fluxo na tela. Requisitos:
 
-- **Nunca bloquear a interface.** `subprocess.Popen`, leitura incremental do
-  `stdout` em uma **thread separada** que despeja as linhas em uma `queue.Queue`, e
-  o processo guardado para permitir interromper. O Tk é de thread única: a thread
-  leitora nunca toca em widget. Quem consome a fila e atualiza a tela é o próprio
-  laço do Tk, por `root.after(200, ...)` — este é o ponto onde uma implementação
-  ingênua trava a janela inteira.
+- **Nunca bloquear a interface.** Leituras e cálculos demorados usam
+  `QThreadPool`/`QRunnable`; um `Signal` entrega resultado ou erro ao objeto `Tasks`
+  na thread da janela. O treino usa `subprocess.Popen`, guardado em `Job` para
+  permitir interrupção. Uma thread leitora separada drena `stdout` e, como estado
+  compartilhado, só altera `job.log` sob lock, limitado às últimas 800 linhas.
+  **Só a thread da janela toca em widgets.** Um `QTimer` de 700 ms chama `poll`,
+  que consulta o processo, copia o log sob lock e atualiza a tela. A leitora nunca
+  recebe widgets; o encerramento com espera e eventual `kill` também ocorre fora
+  da thread da janela.
 - **Acompanhamento ao vivo** relendo `progresso.json` do diretório da partição e
   redesenhando perda e acurácia a cada atualização. O arquivo já é escrito a cada
   época pelo callback de treino; não é preciso instrumentar nada.
@@ -321,7 +338,8 @@ como subprocesso, com a saída em fluxo na tela. Requisitos:
 **Resultados.** Para o experimento selecionado, ler `runs/models/<exp>/`:
 
 - Tabela por arquitetura e partição, com acurácia, F1, acaso e razão sobre o acaso.
-- `curvas_treino.png`, `matriz_confusao.png`, `acuracia_por_locutor.png`.
+- Curvas reconstruídas de `progresso.json`, `matriz_confusao.png` e
+  `acuracia_por_locutor.png`, com aviso quando faltar artefato.
 - **Comparação entre protocolos**, que é o resultado do trabalho — a mesma
   arquitetura sob perfis diferentes, na mesma figura:
 
@@ -329,35 +347,35 @@ como subprocesso, com a saída em fluxo na tela. Requisitos:
   |---|---|---|
   | Intra-microfone | 97,34% ± 0,24 | voz **e** canal, indistinguíveis |
   | Só silêncio, intra | 85,40% | canal isolado |
-  | Cross-microfone | 38,12% | voz, isolada do modelo de microfone |
+  | Cross-microfone | 38,12% | transferência entre transdutores, com sessão e enunciados compartilhados |
   | Permutação | 0,70% ± 0,02 | controle — deve ficar no acaso |
   | Acaso | 0,93% | — |
 
-  Montar da leitura dos `metricas.json`, com fallback explícito quando um
-  experimento ainda não tiver sido executado.
+  A comparação é montada dos `metricas.json`, filtrando arquitetura e número de
+  classes, com aviso quando não houver resultados. As linhas acima são referências
+  históricas; o painel mostra apenas os relatórios disponíveis. Uma única partição
+  aparece com desvio não estimável, e os perfis atuais não substituem snapshots
+  históricos de configuração.
 
 ---
 
-## 6. Estrutura de arquivos sugerida
+## 6. Estrutura de arquivos implementada
 
 ```
 ui/
-├── app.py                 # entrada: cria a janela, a faixa de seleção e o ttk.Notebook
-├── dados.py               # acesso a runs/: listar trilhas, locutores, enunciados; ler manifesto,
-│                          #   mfccs, assinaturas, métricas, progresso. Sem matplotlib aqui.
-├── figuras.py             # replot ao vivo (MFCC, assinaturas, curvas) usando sr.preprocessing.visualization
-├── execucao.py            # subprocesso de treino, streaming de log, leitura de progresso.json
-└── abas/
-    ├── corpus.py
-    ├── sinal.py
-    ├── vad.py
-    ├── filtragem.py
-    ├── preenfase.py
-    ├── mfcc.py
-    ├── assinatura.py
-    ├── tensores.py
-    ├── protocolos.py
-    └── aprendizado.py
+├── __init__.py            # identifica o pacote da interface
+├── app.py                 # entrada, janela, seleção, navegação e persistência com QSettings
+├── dados.py               # leitura e cache de artefatos, partições e estatísticas sem widgets
+├── figuras.py             # gráficos matplotlib embutidos em canvas Qt e barras de navegação
+├── execucao.py            # comando, ambiente, subprocesso, log sob lock e interrupção
+├── conteudo.py            # Selection, catálogo de etapas e preparação dos dados em segundo plano
+├── paginas.py             # páginas do pipeline e inspeção de tensores e normalização
+├── experimentos.py        # formulário de treino, acompanhamento e comparação de resultados
+├── componentes.py         # cartões, tabelas, rótulos e painéis de imagem com zoom
+├── estilo.py              # folha de estilo dos widgets Qt
+├── tarefas.py             # QThreadPool/QRunnable e entrega de resultados por Signal
+├── README.md              # instruções locais de uso
+└── assets/chevron.svg     # indicador dos seletores no tema
 ```
 
 Separar `dados.py` de `figuras.py` permite testar o acesso a disco sem depender de
@@ -367,12 +385,14 @@ a olho.
 ### Cache
 
 `functools.lru_cache` na leitura de `mfccs.npy`, `assinaturas.npz`, do manifesto e
-dos `metricas.json`. São dezenas de milhares de arquivos pequenos: sem cache, cada
-troca de aba relê disco. **Não** cachear `progresso.json` — é justamente o arquivo
-que muda durante o treino.
+dos `metricas.json`, com chave formada pelo caminho e por `(mtime_ns, tamanho)`.
+Assim, um arquivo substituído pode ser relido sem invalidar todo o cache.
+`progresso.json` é lido com `live=True`, **fora do cache**, pois muda durante o treino;
+uma leitura incompleta retorna ausência de dados e será tentada novamente.
 
-Cachear também as figuras já desenhadas, por `(trilha, locutor, enunciado, estágio)`.
-Recriar uma `Figure` a cada exibição é o que faz uma interface Tk parecer travada.
+Inventários e referências às formas dos MFCCs também têm cache limitado. `Ctrl + R`
+limpa os caches e relê a trilha. As figuras permanecem nos widgets das páginas já
+carregadas, com a chave descrita na §4; não existe um cache separado de `Figure`.
 
 ### Testes
 
@@ -383,9 +403,10 @@ Recriar uma `Figure` a cada exibição é o que faz uma interface Tk parecer tra
 - O manifesto mapeia índice → nome em ambas as direções sem colisão.
 - A montagem do comando de treino preserva as sobrescritas de ambiente.
 
-Os testes cobrem `dados.py` e a montagem do comando, que não dependem de tela. Não
-tentar instanciar widgets na suíte: exigiria um `DISPLAY` e tornaria os testes
-dependentes de ambiente gráfico.
+Os testes cobrem dados, partições, normalização, montagem do comando e interrupção
+do subprocesso. Também instanciam widgets com `QT_QPA_PLATFORM=offscreen`, sem
+exigir `DISPLAY`, para verificar navegação, avisos de ausência, confirmação de
+sobrescrita, reaproveitamento de páginas e descarte de respostas antigas.
 
 ---
 
@@ -402,8 +423,8 @@ inexistente (2,8 GB livres). Alternativa barata: manter uma **vitrine** de algum
 dezenas de WAVs (poucas centenas de MB) só para essa finalidade, em vez do corpus
 inteiro.
 
-**Reprodução do áudio** — depende do mesmo pré-requisito, e no Tk exige biblioteca
-externa (`simpleaudio` ou `sounddevice`), já que a biblioteca padrão não toca áudio.
+**Reprodução do áudio** — depende do mesmo pré-requisito e de integrar um mecanismo
+de reprodução, ainda fora desta versão.
 
 **Metadados dos locutores.** O `speaker-info.txt` do VCTK traz idade, gênero,
 sotaque e região. Foi apagado com o corpus, mas são poucos KB e pode ser obtido

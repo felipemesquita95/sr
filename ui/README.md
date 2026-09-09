@@ -20,12 +20,32 @@ parâmetros e em subprocesso para treinamento.
 
 ## Navegação
 
+Treino e resultados são divididos em seções com rolagens independentes. Em
+**Resultados → Perda e acurácia**, a partição é escolhida no cabeçalho fixo.
+**Arquiteturas e treino** separa acompanhamento, configuração e inspeção das redes.
+O acompanhamento atualiza as linhas do mesmo gráfico a cada época, preservando
+o painel e a posição de leitura.
+
+A roda do mouse sobre campos não altera seleções ou números. Sobre os gráficos,
+ela rola a página; para ampliar uma região, use a ferramenta de zoom na barra do
+gráfico. Tabelas e log devolvem a rolagem à página ao alcançar suas extremidades.
+
 - Seleção fixa no topo: trilha, locutor com busca e enunciado.
+- Para selecionar digitando, confirme com Enter ou saia do campo. O locutor
+  aceita índice (`4`, `004`) ou nome exato (`p228`); o enunciado aceita seu número.
+  Entradas inexistentes restauram a seleção anterior com um aviso, sem deixar
+  um número no campo enquanto outro áudio é exibido.
+- Nas etapas de sinal, **Figuras salvas deste locutor** lista os enunciados
+  realmente presentes para aquela etapa, sem trocar o locutor escolhido.
+  Ao trocar o locutor, se o enunciado anterior não tiver sinal disponível,
+  seleciona um exemplo com figuras do novo locutor; o número aparece no topo.
 - Etapas na lateral; treino e resultados têm páginas próprias.
-- Setas esquerda/direita: enunciado anterior/próximo, fora de campos de texto.
+- Setas esquerda/direita: gravação anterior/próxima, inclusive após escolher nos
+  seletores. Ao chegar ao último enunciado, seguem para o próximo locutor.
+  Durante uma busca digitada, as setas editam o texto; `Alt + ←/→` troca a gravação.
 - `Alt + ↑/↓`: etapa anterior/próxima; `Ctrl + F`: buscar locutor.
 - `Ctrl + R`: atualizar os artefatos e invalidar os caches.
-- **Amostra completa**: sorteia uma gravação com figuras dos primeiros enunciados.
+- **Amostra completa**: sorteia outra gravação com figuras, sem repetir a seleção atual.
 - PNGs: botões de zoom, arrastar, ajustar e ampliar em uma janela maior.
 - Gráficos: barra matplotlib para zoom, deslocamento e exportação. Os MFCCs
   pareados compartilham a escala de cor.
@@ -52,9 +72,15 @@ encerramento sem bloquear a janela.
 
 ## Limites dos artefatos
 
-Sem áudio bruto, duração exata e quantidade de amostras originais não podem ser
-recuperadas. As etapas iniciais exibem PNGs persistidos; gráficos inexistentes
-são indicados explicitamente. Metadados de processamento vêm dos perfis atuais,
+Em **Sinal bruto**, quando faltam PNGs, o app procura o áudio original da seleção
+e prepara a forma de onda e o espectro em segundo plano, sem alterar artefatos.
+A prévia usa a taxa nativa do arquivo, informa duração e amostras e resume
+extremos/picos para limitar o desenho. No BrSD, a numeração vem do índice do
+projeto; no VCTK, exige a correspondência exata do manifesto, inclusive microfone.
+Isso permite explorar outros locutores do BrSD, cujos PNGs só cobrem o locutor 1.
+Sem o áudio nem o PNG, exibe um aviso e um botão para uma gravação com figuras;
+não reconstrói sinais a partir de MFCCs. As demais etapas iniciais usam PNGs salvos.
+Metadados de processamento vêm dos perfis atuais,
 não de snapshots históricos. A reconstrução dos tensores usa a divisão real do
 sistema e lê apenas as formas das matrizes; estatísticas de normalização são
 calculadas sob solicitação, em duas passagens pelo treino.

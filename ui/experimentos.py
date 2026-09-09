@@ -9,13 +9,13 @@ import shutil
 
 import numpy as np
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QComboBox, QMessageBox, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
 
 from ui import dados, figuras
-from ui.componentes import ImagePanel, button, card, label, row, stat, table
+from ui.componentes import ChoiceBox, NumberBox, LogView, ImagePanel, button, card, label, row, stat, table
 from ui.conteudo import image, model_parameters
 from ui.execucao import TrainingManager, feature_paths, training_command
-from ui.paginas import Page
+from ui.paginas import SectionedPage
 
 ARCHITECTURES = {
     'cnn': ('Coeficientes', 'Flatten'),
@@ -27,7 +27,7 @@ ARCHITECTURES = {
 }
 
 
-class TrainingPage(Page):
+class TrainingPage(SectionedPage):
     """Conserva o acompanhamento do processo enquanto o usuário navega pelo pipeline.
 
     O timer permanece ativo mesmo com a página oculta. A leitura do log não
@@ -40,6 +40,8 @@ class TrainingPage(Page):
         profiles: Mapa de arquivos de perfil para configurações.
         tasks: Gerenciador criado na thread da janela para trabalhos em segundo plano.
     """
+    section_names = ('Acompanhamento', 'Novo experimento', 'Arquiteturas')
+
     def __init__(self, stage, title, description, profiles, tasks):
         super().__init__(stage, title, description)
         self.profiles, self.tasks = profiles, tasks
@@ -47,18 +49,19 @@ class TrainingPage(Page):
         self.context = None
         self.last_progress = None
         self.last_log = ''
-        self.profile = QComboBox()
+        self.profile = ChoiceBox()
         for path in profiles:
             self.profile.addItem(path.stem, path)
-        self.architecture = QComboBox()
+        self.architecture = ChoiceBox()
         self.architecture.addItems(list(ARCHITECTURES))
-        self.folds, self.epochs = QSpinBox(), QSpinBox()
+        self.folds, self.epochs = NumberBox(), NumberBox()
         self.folds.setRange(1, 5)
         self.folds.setPrefix('Partições: ')
         self.epochs.setRange(1, 100000)
         self.epochs.setValue(1000)
         self.epochs.setPrefix('Épocas: ')
-        form, layout = card('Novo experimento', 'Treina exclusivamente sobre as features persistidas.')
+        self.use_section(1)
+        form, layout = card('Configurar treinamento', 'Escolha o perfil e a rede. Você pode continuar navegando durante o treino.')
         layout.addWidget(row(self.profile, self.architecture))
         layout.addWidget(row(self.folds, self.epochs))
         self.destination = label('', 'muted')
@@ -71,20 +74,33 @@ class TrainingPage(Page):
         self.stop_button.setEnabled(False)
         layout.addWidget(row(self.start_button, self.stop_button))
         self.content.addWidget(form)
+        self.content.addStretch()
+        self.use_section(0)
         self.status = label('Nenhum treino iniciado.', 'notice')
         self.content.addWidget(self.status)
-        self.log = QPlainTextEdit()
+        actions = row(button('Configurar um experimento', lambda: self.sections.setCurrentIndex(1)),
+                      button('Ver arquiteturas', lambda: self.sections.setCurrentIndex(2)))
+        self.content.addWidget(actions)
+        self.history_host, self.history_layout = card()
+        self.history_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_title = label('As curvas aparecem após a primeira época concluída.', 'muted')
+        self.history_title.setContentsMargins(16, 10, 16, 0)
+        self.history_plot = figuras.HistoryPlot()
+        self.history_layout.addWidget(self.history_title)
+        self.history_layout.addWidget(self.history_plot)
+        self.content.addWidget(self.history_host)
+        logs, logs_layout = card('Saída do experimento', 'O log pode ser consultado sem interromper o acompanhamento.')
+        self.log = LogView()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(800)
-        self.log.setMinimumHeight(190)
-        self.log.setMaximumHeight(270)
+        self.log.setFixedHeight(190)
         self.log.setPlaceholderText('A saída do experimento aparecerá aqui.')
-        self.content.addWidget(self.log)
-        self.history_host = QWidget()
-        self.history_layout = QVBoxLayout(self.history_host)
-        self.content.addWidget(self.history_host)
+        logs_layout.addWidget(self.log)
+        self.content.addWidget(logs)
+        self.content.addStretch()
+        self.use_section(2)
         models, layout = card('Inspecionar as arquiteturas', 'A contagem é calculada construindo cada rede na CPU, fora da thread da janela.')
-        self.frames = QSpinBox()
+        self.frames = NumberBox()
         self.frames.setRange(16, 100000)
         self.frames.setValue(300)
         self.frames.setPrefix('Quadros: ')
@@ -99,6 +115,7 @@ class TrainingPage(Page):
                               'não torna a rede completa invariante à ordem dos coeficientes.', 'muted'))
         self.content.addWidget(models)
         self.content.addStretch()
+        self.use_section(0)
         self.profile.currentIndexChanged.connect(self.profile_changed)
         self.profile_changed()
         self.timer = QTimer(self)
@@ -180,6 +197,7 @@ class TrainingPage(Page):
         self.last_progress, self.last_log = None, ''
         self.clear_history()
         self.status.setText(f'Treinamento iniciado · PID {job.process.pid}')
+        self.sections.setCurrentIndex(0)
         self.poll()
 
     def stop(self):
@@ -192,12 +210,9 @@ class TrainingPage(Page):
             self.poll()
 
     def clear_history(self):
-        """Descarta os canvas anteriores sem destruir o painel de acompanhamento.
-
-        A remoção adiada permite trocar o histórico durante uma atualização do Qt.
-        """
-        while self.history_layout.count():
-            self.history_layout.takeAt(0).widget().deleteLater()
+        """Limpa as séries mantendo o canvas, a altura do cartão e a posição de leitura."""
+        self.history_title.setText('As curvas aparecem após a primeira época concluída.')
+        self.history_plot.update_history({}, reset_view=True)
 
     def poll(self):
         """Atualiza widgets a partir de uma cópia do log e do progresso recente.
@@ -232,9 +247,8 @@ class TrainingPage(Page):
                 progress = dados.read_json(latest[1], live=True)
                 if progress:
                     self.last_progress = latest
-                    self.clear_history()
-                    self.history_layout.addWidget(label(f'Partição {progress.get("particao")} · época {progress.get("epoca")} concluída', 'cardTitle'))
-                    self.history_layout.addWidget(figuras.history(progress.get('historico', {})))
+                    self.history_title.setText(f'Partição {progress.get("particao")} · época {progress.get("epoca")} concluída')
+                    self.history_plot.update_history(progress.get('historico', {}))
         except OSError:
             pass  # O arquivo pode ser substituído atomicamente durante o timer.
 
@@ -270,7 +284,7 @@ class TrainingPage(Page):
         self.tasks.submit(lambda: model_parameters(shape, classes, rate), finish)
 
 
-class ResultsPage(Page):
+class ResultsPage(SectionedPage):
     """Compara somente resultados de uma mesma arquitetura e número de classes.
 
     Os perfis também aparecem quando ainda não têm métricas, tornando
@@ -284,15 +298,25 @@ class ResultsPage(Page):
         profiles: Mapa de arquivos de perfil para configurações.
         tasks: Gerenciador criado na thread da janela para trabalhos em segundo plano.
     """
+    section_names = ('Visão geral', 'Perda e acurácia', 'Matriz e erros', 'Comparar protocolos')
+
     def __init__(self, stage, title, description, profiles, tasks):
         super().__init__(stage, title, description)
         self.profiles, self.tasks = profiles, tasks
         self.records = []
-        self.experiment, self.architecture, self.classes = QComboBox(), QComboBox(), QComboBox()
+        self.experiment, self.architecture, self.classes = ChoiceBox(), ChoiceBox(), ChoiceBox()
         for widget in (self.experiment, self.architecture, self.classes):
+            widget.setSizeAdjustPolicy(ChoiceBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            widget.setMinimumContentsLength(8)
             self.controls.addWidget(widget, 1)
             widget.currentIndexChanged.connect(self.rebuild)
-        self.controls.addWidget(button('Atualizar resultados', self.reload.emit))
+        self.classes.setFixedWidth(80)
+        self.classes.setToolTip('Número de classes comparáveis')
+        self.controls.addWidget(button('Atualizar', self.reload.emit))
+        self.chooser = ChoiceBox()
+        self.chooser.setFixedWidth(170)
+        self.chooser.currentIndexChanged.connect(self.choose_detail)
+        self.controls.insertWidget(3, self.chooser)
         self.detail_number = 0
 
     def display(self, data, ctx):
@@ -334,7 +358,7 @@ class ResultsPage(Page):
         """
         if not hasattr(self, 'context'):
             return
-        self.reset_body()
+        self.reset_sections()
         self.detail_number += 1
         architecture = self.architecture.currentText()
         count = int(self.classes.currentText() or 0)
@@ -350,6 +374,14 @@ class ResultsPage(Page):
                   f'{r["acuracia"] / r["acaso"]:.1f}×', r['num_amostras_teste']] for r in selected]))
         else:
             self.notice('Ainda não há resultados para este experimento, arquitetura e número de classes.')
+        if selected:
+            self.content.addWidget(row(button('Abrir perda e acurácia', lambda: self.sections.setCurrentIndex(1), primary=True),
+                                       button('Inspecionar os erros', lambda: self.sections.setCurrentIndex(2))))
+        self.notice('Uma partição não permite estimar desvio. Confira também VAD, truncamento, '
+                    'features e configuração de treino. Cross-microfone compartilha sessão e '
+                    'enunciados; não demonstra voz isolada.', True)
+        self.content.addStretch()
+        self.use_section(3)
         comparisons = []
         for exp in sorted({r['experimento'] for r in records}):
             values = [r for r in records if r['experimento'] == exp]
@@ -364,22 +396,42 @@ class ResultsPage(Page):
                 [[r['experiment'], f'{r["mean"]:.2%}', f'{r["std"] * 100:.2f}' if r['std'] is not None else 'Não estimável', r['folds']]
                  for r in comparisons]))
             self.content.addWidget(widget)
-        self.notice('Uma partição não permite estimar desvio. Confira também VAD, truncamento, '
-                    'features e configuração de treino: os resultados antigos não contêm snapshots completos. '
-                    'Cross-microfone compartilha sessão e enunciados; não demonstra voz isolada.', True)
-        if selected:
-            chooser = QComboBox()
-            for record in selected:
-                chooser.addItem('Inspecionar ' + record['particao'], record['diretorio'])
-            self.content.addWidget(chooser)
-            self.detail_host = QWidget()
-            self.detail_layout = QVBoxLayout(self.detail_host)
-            self.detail_layout.setContentsMargins(0, 0, 0, 0)
-            self.content.addWidget(self.detail_host)
-            chooser.currentIndexChanged.connect(lambda: self.detail(Path(chooser.currentData())))
-            self.detail(Path(chooser.currentData()))
+        if not comparisons:
+            self.notice('Ainda não há resultados comparáveis para esta arquitetura e número de classes.')
         self.content.addStretch()
+        old_directory = self.chooser.currentData()
+        self.chooser.blockSignals(True)
+        self.chooser.clear()
+        if selected:
+            for record in selected:
+                self.chooser.addItem('Partição ' + record['particao'].removeprefix('particao'), record['diretorio'])
+            self.chooser.setCurrentIndex(max(0, self.chooser.findData(old_directory)))
+        self.chooser.blockSignals(False)
+        self.chooser.setEnabled(bool(selected))
+        self.use_section(1)
+        self.curve_message = label('Selecione uma partição com histórico disponível.', 'notice')
+        self.content.addWidget(self.curve_message)
+        self.result_history = figuras.HistoryPlot()
+        self.result_history.hide()
+        self.content.addWidget(self.result_history)
+        self.content.addStretch()
+        self.use_section(2)
+        self.detail_host = QWidget()
+        self.detail_layout = QVBoxLayout(self.detail_host)
+        self.detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.content.addWidget(self.detail_host)
+        self.content.addStretch()
+        if selected:
+            self.choose_detail()
+        else:
+            self.detail_layout.addWidget(label('Nenhuma partição disponível para inspecionar.', 'notice'))
+        self.use_section(0)
         self.ready()
+
+    def choose_detail(self):
+        directory = self.chooser.currentData()
+        if directory and hasattr(self, 'detail_layout'):
+            self.detail(Path(directory))
 
     def detail(self, directory):
         """Carrega figuras sem permitir que uma partição antiga substitua a atual.
@@ -392,6 +444,8 @@ class ResultsPage(Page):
         """
         self.detail_number += 1
         number = self.detail_number
+        self.curve_message.setText('Carregando histórico de ' + directory.name + '…')
+        self.result_history.hide()
         while self.detail_layout.count():
             self.detail_layout.takeAt(0).widget().deleteLater()
         self.detail_layout.addWidget(label('Carregando figuras da partição…', 'notice'))
@@ -408,10 +462,15 @@ class ResultsPage(Page):
                 self.detail_layout.takeAt(0).widget().deleteLater()
             if error:
                 self.detail_layout.addWidget(label(error, 'warning'))
+                self.curve_message.setText('Não foi possível ler o histórico: ' + error)
                 return
             progress, images = value
-            if progress:
-                self.detail_layout.addWidget(figuras.history(progress.get('historico', {})))
+            if progress and any(progress.get('historico', {}).values()):
+                self.curve_message.setText(f'{directory.parents[1].name}  /  {directory.parent.name}  /  {directory.name}')
+                self.result_history.update_history(progress.get('historico', {}), reset_view=True)
+                self.result_history.show()
+            else:
+                self.curve_message.setText('Histórico numérico não disponível para esta partição.')
             for title, value, path in images:
                 if not value.isNull():
                     self.detail_layout.addWidget(ImagePanel(title, value, path))

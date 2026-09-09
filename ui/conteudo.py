@@ -54,6 +54,10 @@ class Selection:
         """
         return str(self.track), self.speaker, self.utterance
 
+    @property
+    def caption(self):
+        return f'{self.track.name} · {self.names.get(self.speaker, f"Locutor {self.speaker}")} · enunciado {self.utterance:03d}'
+
 
 STAGES = [
     ('corpus', 'Visão geral', 'Conheça a distribuição das gravações e as condições que definem o experimento.'),
@@ -118,6 +122,13 @@ def load_stage(stage, ctx, settings=None, fold=1):
         if stage == 'vad' and ctx.settings and not ctx.settings.enable_vad:
             selected = [('sinal_original.png', 'Sinal preservado • VAD desativado')]
         payload['images'] = [image(ctx.sample / name, title) for name, title in selected]
+        payload['available_figures'] = [u for u in ctx.inventory[ctx.speaker]
+            if all((ctx.track / str(ctx.speaker) / str(u) / name).is_file() for name, _ in selected)]
+        if stage == 'sinal' and any(value.isNull() for _, value, _ in payload['images']):
+            source = dados.audio_source(ctx.settings, ctx.speaker, ctx.utterance, ctx.manifest, ctx.track.name)
+            if source:
+                payload['raw'] = dados.raw_signal(source)
+                payload['images'] = []
         if stage == 'vad':
             payload['alignment'] = dados.read_json(dados.RUNS / 'models/verificacao_alinhamento/alinhamento.json')
     elif stage == 'corpus':

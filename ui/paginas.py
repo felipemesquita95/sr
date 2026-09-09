@@ -4,12 +4,12 @@ Os dados chegam prontos dos carregadores; apenas estes métodos, chamados
 na thread da janela, criam widgets e canvas. Preservar a página permite
 reutilizar gráficos quando a navegação volta à mesma seleção.
 """
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLineEdit, QProgressBar,
-    QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QHBoxLayout, QLayout, QLineEdit, QProgressBar,
+    QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 from ui import dados, figuras
-from ui.componentes import ImagePanel, button, card, label, row, stat, table
+from ui.componentes import ChoiceBox, NumberBox, ImagePanel, button, card, label, row, stat, table
 
 
 class Page(QWidget):
@@ -25,6 +25,7 @@ class Page(QWidget):
         description: Explicação do estágio para o usuário.
     """
     reload = Signal()
+    select_sample = Signal(int, int)
 
     def __init__(self, stage, title, description):
         super().__init__()
@@ -38,6 +39,16 @@ class Page(QWidget):
         self.layout.addWidget(label(description, 'description'))
         self.controls = QHBoxLayout()
         self.layout.addLayout(self.controls)
+        if stage in ('sinal', 'vad', 'filtragem', 'preenfase'):
+            self.figure_speaker = None
+            self.figure_samples = ChoiceBox()
+            self.figure_samples.setObjectName('availableFigures')
+            self.figure_samples.setPlaceholderText('Escolha um enunciado com figura')
+            self.figure_samples.setMinimumWidth(240)
+            self.controls.addWidget(label('Figuras salvas deste locutor:', 'muted'))
+            self.controls.addWidget(self.figure_samples)
+            self.controls.addStretch()
+            self.figure_samples.currentIndexChanged.connect(self.open_figure_sample)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setTextVisible(False)
@@ -49,8 +60,14 @@ class Page(QWidget):
         self.layout.addWidget(self.message)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.verticalScrollBar().setSingleStep(32)
         self.layout.addWidget(self.scroll, 1)
         self.reset_body()
+
+    def open_figure_sample(self, index):
+        if index >= 0 and self.figure_speaker is not None:
+            self.select_sample.emit(self.figure_speaker, self.figure_samples.itemData(index))
 
     def reset_body(self):
         """Substitui o conteúdo preservando os controles permanentes da página.
@@ -65,6 +82,7 @@ class Page(QWidget):
         self.content = QVBoxLayout(self.body)
         self.content.setContentsMargins(0, 4, 4, 12)
         self.content.setSpacing(16)
+        self.content.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
         self.scroll.setWidget(self.body)
 
     def loading(self, text='Carregando os artefatos…'):
@@ -73,6 +91,8 @@ class Page(QWidget):
         Args:
             text: Mensagem apresentada durante a tarefa em segundo plano.
         """
+        if hasattr(self, 'figure_samples'):
+            self.figure_samples.setEnabled(False)
         self.progress.show()
         self.message.setText(text)
         self.message.show()
@@ -106,12 +126,22 @@ class Page(QWidget):
         """
         for title, image, path in images:
             if not image.isNull():
-                self.content.addWidget(ImagePanel(title, image, path))
+                self.content.addWidget(ImagePanel(f'{title} · {ctx.caption}', image, path))
             else:
                 available = ', '.join(str(u) for u, yes in ctx.inventory[ctx.speaker].items() if yes)
                 self.notice(f'{title}: figura não disponível para esta seleção. '
                             f'Enunciados com figuras neste locutor: {available or "nenhum"}. '
-                            'O áudio bruto não está disponível para recalcular esta etapa.')
+                            'Esta etapa depende da figura salva ou do áudio original; MFCCs não permitem recuperar o sinal bruto.')
+        if any(image.isNull() for _, image, _ in images):
+            if self.stage == 'sinal':
+                self.notice('O áudio original desta gravação não foi encontrado no caminho configurado. '
+                            'Escolha uma figura disponível abaixo ou explore os coeficientes na aba MFCC.', True)
+            choices = [(s, u) for s, values in ctx.inventory.items() for u, yes in values.items() if yes]
+            choices.sort(key=lambda pair: (pair[0] != ctx.speaker, pair))
+            if choices:
+                s, u = choices[0]
+                self.content.addWidget(button(f'Abrir figura disponível: locutor {s}, enunciado {u:03d}',
+                                              lambda: self.select_sample.emit(s, u)))
 
     def display(self, data, ctx):
         """Converte os dados da etapa em conteúdo da seleção já validada pela janela.
@@ -125,15 +155,33 @@ class Page(QWidget):
         """
         self.reset_body()
         stage = self.stage
+        if hasattr(self, 'figure_samples'):
+            self.figure_speaker = ctx.speaker
+            self.figure_samples.blockSignals(True)
+            self.figure_samples.clear()
+            for utterance in data.get('available_figures', []):
+                self.figure_samples.addItem(f'Enunciado {utterance:03d}', utterance)
+            self.figure_samples.setCurrentIndex(self.figure_samples.findData(ctx.utterance))
+            self.figure_samples.setEnabled(self.figure_samples.count() > 0)
+            self.figure_samples.blockSignals(False)
         settings = ctx.settings
         if stage == 'corpus':
             self.overview(ctx)
         elif stage == 'sinal':
-            rate = f'{settings.source_sampling_rate / 1000:g} kHz' if settings else 'Não registrada'
-            self.content.addWidget(row(stat('Taxa de leitura', rate, 'Declarada no perfil atual'),
-                                       stat('Gravação', str(ctx.utterance), ctx.names.get(ctx.speaker, f'Locutor {ctx.speaker}'))))
-            self.notice('A duração exata e o número de amostras do áudio bruto não foram persistidos. '
-                        'Esses valores não podem ser recuperados com precisão a partir dos MFCCs.')
+            if 'raw' in data:
+                raw = data['raw']
+                self.content.addWidget(row(stat('Taxa original', f'{raw["rate"] / 1000:g} kHz', 'Lida do arquivo de áudio'),
+                                           stat('Duração', f'{raw["duration"]:.2f} s'),
+                                           stat('Amostras', f'{raw["samples"]:,}'.replace(',', '.'))))
+                self.notice(f'Prévia do áudio original: {raw["source"]}. Sem alterar features ou resultados. '
+                            'O gráfico resume os extremos do sinal e os picos do espectro para manter a navegação leve.')
+                self.content.addWidget(figuras.raw_signal(raw, ctx.caption))
+            else:
+                rate = f'{settings.source_sampling_rate / 1000:g} kHz' if settings else 'Não registrada'
+                self.content.addWidget(row(stat('Taxa de leitura', rate, 'Declarada no perfil atual'),
+                                           stat('Gravação', str(ctx.utterance), ctx.names.get(ctx.speaker, f'Locutor {ctx.speaker}'))))
+                self.notice('Estas figuras foram salvas no processamento. A duração exata e o número de amostras '
+                            'originais não foram persistidos; MFCCs não recuperam esses valores com precisão.')
         elif stage == 'vad':
             if settings and not settings.enable_vad:
                 self.notice('VAD desativado no perfil desta trilha. As pausas permanecem nas features.')
@@ -253,6 +301,64 @@ class Page(QWidget):
                     'inverter o sentido da travessia e repetir com diferentes sementes de treino.')
 
 
+class SectionedPage(Page):
+    """Seções com rolagens independentes e cabeçalho sempre acessível."""
+    section_names = ()
+
+    def __init__(self, stage, title, description):
+        super().__init__(stage, title, description)
+        self.layout.removeWidget(self.scroll)
+        self.scroll.deleteLater()
+        self.sections = QTabWidget()
+        self.sections.setObjectName('experimentSections')
+        self.sections.setDocumentMode(True)
+        self.areas = []
+        self.section_bodies = []
+        self.section_layouts = []
+        for name in self.section_names:
+            area = QScrollArea()
+            area.setWidgetResizable(True)
+            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            area.verticalScrollBar().setSingleStep(32)
+            self.sections.addTab(area, name)
+            self.areas.append(area)
+            self.section_bodies.append(None)
+            self.section_layouts.append(None)
+        self.layout.addWidget(self.sections, 1)
+        self.reset_sections()
+
+    def reset_sections(self):
+        for index, area in enumerate(self.areas):
+            self.scroll = area
+            Page.reset_body(self)
+            self.section_bodies[index] = self.body
+            self.section_layouts[index] = self.content
+        self.use_section(0)
+
+    def use_section(self, index):
+        """Escolhe o destino de composição sem mudar a seção que o usuário está vendo."""
+        self.scroll = self.areas[index]
+        self.body = self.section_bodies[index]
+        self.content = self.section_layouts[index]
+
+    def loading(self, text='Carregando os artefatos…'):
+        self.progress.show()
+        self.message.setText(text)
+        self.message.show()
+        self.sections.hide()
+
+    def error(self, text):
+        self.progress.hide()
+        self.message.setText(text)
+        self.message.show()
+        self.sections.hide()
+
+    def ready(self):
+        self.progress.hide()
+        self.message.hide()
+        self.sections.show()
+
+
 class TensorPage(Page):
     """Permite inspecionar uma divisão real sem iniciar um treino.
 
@@ -269,10 +375,10 @@ class TensorPage(Page):
     def __init__(self, stage, title, description, profiles, tasks):
         super().__init__(stage, title, description)
         self.profiles, self.tasks = profiles, tasks
-        self.profile = QComboBox()
+        self.profile = ChoiceBox()
         for path in profiles:
             self.profile.addItem(path.stem, path)
-        self.fold = QSpinBox()
+        self.fold = NumberBox()
         self.fold.setRange(1, 5)
         self.fold.setPrefix('Partição ')
         self.controls.addWidget(self.profile, 1)

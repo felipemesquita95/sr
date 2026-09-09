@@ -7,7 +7,15 @@ todas as funções deste módulo devem ser chamadas na thread da janela.
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+
+from ui.componentes import label, scroll_page
+
+
+class PageCanvas(FigureCanvasQTAgg):
+    def wheelEvent(self, event):
+        scroll_page(self, event)
 
 
 class Plot(QWidget):
@@ -20,8 +28,9 @@ class Plot(QWidget):
     def __init__(self, title='', height=340):
         super().__init__()
         self.figure = Figure(figsize=(10, 3.5), dpi=100, layout='constrained', facecolor='white')
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        self.canvas.setMinimumHeight(height)
+        self.canvas = PageCanvas(self.figure)
+        self.canvas.setFixedHeight(height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
         self.toolbar.setMaximumHeight(35)
         self.toolbar.setStyleSheet('QToolButton { color: #263d52; padding: 4px; }')
@@ -44,6 +53,19 @@ class Plot(QWidget):
                 spine.set_color('#dce5ed')
         self.canvas.draw_idle()
         return self
+
+
+def raw_signal(values, caption):
+    plot = Plot(height=430, title=caption)
+    waveform, spectrum = plot.figure.subplots(2, 1)
+    waveform.fill_between(values['time'], values['low'], values['high'], color='#168f83', linewidth=.4)
+    waveform.set(title='Forma de onda original', xlabel='Tempo (s)', ylabel='Amplitude',
+                 xlim=(0, values['duration']))
+    spectrum.plot(values['frequency'] / 1000, values['magnitude'], color='#7562b5', linewidth=.7)
+    spectrum.set(title='Espectro original', xlabel='Frequência (kHz)', ylabel='Magnitude')
+    for axis in (waveform, spectrum):
+        axis.grid(alpha=.15)
+    return plot.finish()
 
 
 def mfcc(matrices, titles):
@@ -91,27 +113,79 @@ def signatures(values):
     return plot.finish()
 
 
+class HistoryPlot(QFrame):
+    """Mantém canvas e geometria entre épocas: atualizar o histórico não move a página."""
+    def __init__(self, values=None):
+        super().__init__()
+        self.setObjectName('historyCard')
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 12)
+        layout.setSpacing(12)
+        heading = QHBoxLayout()
+        heading.addWidget(label('Evolução do aprendizado', 'cardTitle'), 1)
+        heading.addWidget(label('━ Treino', 'legendTrain', wrap=False))
+        heading.addWidget(label('┄ Validação', 'legendValidation', wrap=False))
+        heading.addSpacing(12)
+        self.epochs = label('Aguardando épocas', 'chip', wrap=False)
+        heading.addWidget(self.epochs)
+        layout.addLayout(heading)
+        self.plot = Plot(height=320)
+        self.axes = self.plot.figure.subplots(1, 2)
+        self.lines = {}
+        for ax, key, title, ylabel in zip(self.axes, ['loss', 'accuracy'],
+                                         ['Perda', 'Acurácia'], ['Entropia cruzada', 'Acertos (%)']):
+            ax.set_title(title, loc='left', fontsize=13, fontweight='bold', color='#29485c', pad=16)
+            ax.set(xlabel='Época', ylabel=ylabel)
+            ax.set_facecolor('#f8fbfd')
+            ax.grid(axis='y', alpha=.18)
+            for name, caption, color, style in [(key, 'Treino', '#138f82', '-'),
+                                                ('val_' + key, 'Validação', '#7e72c4', '--')]:
+                self.lines[name], = ax.plot([], [], color=color, label=caption, linewidth=2.2,
+                                           linestyle=style, marker='o', markersize=3)
+        self.plot.finish()
+        self.chart_stack = QStackedWidget()
+        self.chart_stack.addWidget(self.plot)
+        empty = label('Nenhuma época registrada\n\nAs curvas aparecem quando o treinamento produzir um histórico.', 'muted')
+        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.chart_stack.addWidget(empty)
+        self.chart_stack.setFixedHeight(361)
+        layout.addWidget(self.chart_stack)
+        self.last_values = {}
+        self.update_history(values or {})
+
+    @property
+    def canvas(self):
+        return self.plot.canvas
+
+    def update_history(self, values, *, reset_view=False):
+        if reset_view:
+            self.plot.toolbar.update()
+            for ax in self.axes:
+                ax.autoscale(enable=True)
+        self.last_values = values
+        maximum = max((len(values.get(key, [])) for key in self.lines), default=0)
+        self.chart_stack.setCurrentIndex(0 if maximum else 1)
+        self.epochs.setText(f'{maximum} épocas registradas' if maximum else 'Aguardando épocas')
+        for key, line in self.lines.items():
+            series = np.asarray(values.get(key, []), dtype=float)
+            if 'accuracy' in key:
+                series = series * 100
+            line.set_data(np.arange(1, len(series) + 1), series)
+            line.set_markevery(max(1, len(series) // 20))
+        # Um zoom manual continua válido durante o acompanhamento; Restaurar
+        # na barra do gráfico volta aos limites originais.
+        zoomed = self.plot.toolbar._nav_stack() is not None
+        if not zoomed:
+            for ax in self.axes:
+                ax.relim()
+                ax.autoscale_view()
+                ax.set_xlim(.5, max(2, maximum) + .5)
+        self.canvas.draw_idle()
+
+
 def history(values):
-    """Compara treino e validação mesmo quando só parte do histórico está disponível.
-
-    Args:
-        values: Séries de perda e acurácia, com chaves de validação prefixadas por ``val_``.
-
-    Returns:
-        Painel de curvas por época concluída.
-    """
-    plot = Plot(height=270)
-    axes = plot.figure.subplots(1, 2)
-    for ax, key, title in zip(axes, ['loss', 'accuracy'], ['Perda', 'Acurácia']):
-        for name, caption, color in [(key, 'Treino', '#1a9a8b'), ('val_' + key, 'Validação', '#7d83c8')]:
-            series = values.get(name, [])
-            if series:
-                ax.plot(range(1, len(series) + 1), series, color=color, label=caption)
-        ax.set(title=title, xlabel='Época')
-        ax.grid(alpha=.15)
-        if ax.lines:
-            ax.legend(frameon=False)
-    return plot.finish()
+    return HistoryPlot(values)
 
 
 def lengths(split, frames, cap):

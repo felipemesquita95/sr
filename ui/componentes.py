@@ -4,11 +4,107 @@ Texto é apresentado literalmente e tabelas são de leitura. Imagens
 decodificadas pelos workers só viram QPixmap aqui, na thread da janela,
 onde devem ser criados e usados todos os componentes deste módulo.
 """
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QImage, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFrame,
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QImage, QPainter, QPixmap, QWheelEvent
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QFrame,
     QGraphicsScene, QGraphicsView, QHBoxLayout, QHeaderView, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+    QPlainTextEdit, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+
+
+def scroll_page(widget, event):
+    """Entrega a roda à página sem alterar filtros ou engolir a rolagem no canvas."""
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QScrollArea):
+            viewport = parent.viewport()
+            position = viewport.mapFromGlobal(event.globalPosition().toPoint())
+            forwarded = QWheelEvent(QPointF(position), event.globalPosition(),
+                event.pixelDelta(), event.angleDelta(), event.buttons(), event.modifiers(),
+                event.phase(), event.inverted(), event.source())
+            QApplication.sendEvent(viewport, forwarded)
+            event.setAccepted(forwarded.isAccepted())
+            return
+        parent = parent.parentWidget()
+    event.ignore()
+
+
+class ChoiceBox(QComboBox):
+    """A escolha muda por clique/teclado; rolar sobre o campo não muda o experimento."""
+    def wheelEvent(self, event):
+        if self.view().isVisible():
+            super().wheelEvent(event)
+        else:
+            scroll_page(self, event)
+
+
+class SampleSelector(ChoiceBox):
+    """Confirma IDs digitados sem deixar o texto divergir da seleção real."""
+    validation_failed = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.lineEdit().returnPressed.connect(self.commit_text)
+        self.lineEdit().editingFinished.connect(self.commit_text)
+        QApplication.instance().focusChanged.connect(self.commit_on_focus_change)
+
+    def commit_on_focus_change(self, old, new):
+        popup = self.completer().popup()
+        if (old is not None and (old is self or self.isAncestorOf(old)) and new is not None
+                and new is not self and not self.isAncestorOf(new)
+                and new is not popup and not popup.isAncestorOf(new)
+                and self.lineEdit().isModified()):
+            self.commit_text()
+
+    def commit_text(self):
+        if not self.isEnabled() or not self.count():
+            return
+        query = self.currentText().strip().casefold()
+        matches = []
+        for index in range(self.count()):
+            text = self.itemText(index).casefold()
+            data = self.itemData(index)
+            aliases = {text, text.split(' — ')[-1]}
+            if isinstance(data, int):
+                aliases.add(str(data))
+            if query in aliases or (query.isdecimal() and isinstance(data, int) and int(query) == data):
+                matches.append(index)
+        if len(matches) == 1:
+            self.setCurrentIndex(matches[0])
+            self.setEditText(self.itemText(matches[0]))
+        else:
+            previous = self.itemText(self.currentIndex())
+            self.setEditText(previous)
+            self.validation_failed.emit(f'“{query}” não identifica uma opção disponível. Seleção mantida: {previous}.')
+        self.lineEdit().setModified(False)
+
+
+class NumberBox(QSpinBox):
+    def wheelEvent(self, event):
+        scroll_page(self, event)
+
+
+class ReadOnlyTable(QTableWidget):
+    def wheelEvent(self, event):
+        bar = self.verticalScrollBar()
+        delta = event.pixelDelta().y() or event.angleDelta().y()
+        at_edge = (delta < 0 and bar.value() == bar.maximum()) or (delta > 0 and bar.value() == bar.minimum())
+        if bar.maximum() == 0 or at_edge:
+            scroll_page(self, event)
+        else:
+            super().wheelEvent(event)
+
+
+class LogView(QPlainTextEdit):
+    """O log rola internamente e devolve o gesto à página ao chegar às extremidades."""
+    def wheelEvent(self, event):
+        bar = self.verticalScrollBar()
+        delta = event.pixelDelta().y() or event.angleDelta().y()
+        if (delta < 0 and bar.value() == bar.maximum()) or (delta > 0 and bar.value() == bar.minimum()):
+            scroll_page(self, event)
+        else:
+            super().wheelEvent(event)
 
 
 def label(text, name='', wrap=True):
@@ -96,7 +192,7 @@ def table(headers, rows, height=300):
     Returns:
         Tabela de leitura com seleção por linha e ordenação habilitada.
     """
-    item = QTableWidget(len(rows), len(headers))
+    item = ReadOnlyTable(len(rows), len(headers))
     item.setHorizontalHeaderLabels(headers)
     item.verticalHeader().hide()
     item.setAlternatingRowColors(True)
@@ -105,8 +201,8 @@ def table(headers, rows, height=300):
     item.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     item.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     item.verticalHeader().setDefaultSectionSize(38)
-    item.setMinimumHeight(min(height, 44 + max(1, len(rows)) * 38))
-    item.setMaximumHeight(height)
+    item.setFixedHeight(min(height, 46 + max(1, len(rows)) * 38))
+    item.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     for r, values in enumerate(rows):
         for c, value in enumerate(values):
             cell = QTableWidgetItem(str(value))
@@ -171,7 +267,7 @@ class ZoomView(QGraphicsView):
             self.zoom(1.2 if event.angleDelta().y() > 0 else 1 / 1.2)
             event.accept()
         else:
-            event.ignore()
+            scroll_page(self, event)
 
     def resizeEvent(self, event):
         """Reajusta apenas imagens que ainda estejam em modo automático.

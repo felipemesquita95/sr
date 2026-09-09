@@ -12,13 +12,13 @@ for source in (ROOT, ROOT / 'src'):
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
 
-from PySide6.QtCore import QSettings, QTimer, Qt
+from PySide6.QtCore import QEvent, QSettings, QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QFrame, QHBoxLayout,
     QLineEdit, QListWidget, QMainWindow, QMessageBox, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ui import dados
-from ui.componentes import button, label
+from ui.componentes import SampleSelector, button, label
 from ui.conteudo import STAGES, Selection, load_stage
 from ui.estilo import STYLE
 from ui.experimentos import ResultsPage, TrainingPage
@@ -27,7 +27,7 @@ from ui.tarefas import Tasks
 
 
 def combo(name):
-    widget = QComboBox()
+    widget = SampleSelector()
     widget.setObjectName(name)
     widget.setEditable(True)
     widget.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -81,10 +81,15 @@ class MainWindow(QMainWindow):
         for sequence, callback in [('Alt+Down', lambda: self.step_page(1)), ('Alt+Up', lambda: self.step_page(-1)),
                                    ('Right', lambda: self.step_sample(1, keyboard=True)),
                                    ('Left', lambda: self.step_sample(-1, keyboard=True)),
+                                   ('Alt+Right', lambda: self.step_sample(1)),
+                                   ('Alt+Left', lambda: self.step_sample(-1)),
                                    ('Ctrl+R', self.refresh_data), ('Ctrl+F', self.focus_speaker)]:
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(callback)
             self.shortcuts.append(shortcut)
+        for selector in (self.track, self.speaker, self.utterance):
+            selector.installEventFilter(self)
+            selector.lineEdit().installEventFilter(self)
         available = dados.tracks(dados.RUNS / 'features')
         self.track.blockSignals(True)
         for path in available:
@@ -124,7 +129,8 @@ class MainWindow(QMainWindow):
         self.navigation.setObjectName('navigation')
         self.navigation.setSpacing(1)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        short_titles = {'filtragem': 'Filtragem e taxa', 'tensores': 'Tensores', 'protocolos': 'Protocolos'}
+        short_titles = {'filtragem': 'Filtragem e taxa', 'tensores': 'Tensores',
+                        'protocolos': 'Protocolos', 'assinatura': 'Assinatura', 'treino': 'Redes e treino'}
         for i, (_, title, _) in enumerate(STAGES):
             self.navigation.addItem(f'{i + 1:02d}   {short_titles.get(STAGES[i][0], title)}')
             self.navigation.item(i).setToolTip(title)
@@ -144,6 +150,9 @@ class MainWindow(QMainWindow):
         line = QHBoxLayout()
         line.setSpacing(14)
         self.track, self.speaker, self.utterance = combo('track'), combo('speaker'), combo('utterance')
+        for selector in (self.track, self.speaker, self.utterance):
+            selector.validation_failed.connect(lambda message: self.statusBar().showMessage(message, 10000))
+            selector.setToolTip('Digite o número ou nome exato e pressione Enter, ou escolha na lista.')
         for name, widget, stretch in [('TRILHA', self.track, 2), ('LOCUTOR', self.speaker, 2), ('ENUNCIADO', self.utterance, 2)]:
             wrapper = QWidget()
             field = QVBoxLayout(wrapper)
@@ -154,8 +163,8 @@ class MainWindow(QMainWindow):
             line.addWidget(wrapper, stretch)
         self.previous = button('←', lambda: self.step_sample(-1))
         self.next = button('→', lambda: self.step_sample(1))
-        self.previous.setToolTip('Enunciado anterior')
-        self.next.setToolTip('Próximo enunciado')
+        self.previous.setToolTip('Gravação anterior · volta ao locutor anterior no início · Alt + ←')
+        self.next.setToolTip('Próxima gravação · avança ao próximo locutor no fim · Alt + →')
         self.complete = button('Amostra completa', self.random_complete, primary=True)
         line.addWidget(self.previous, 0, Qt.AlignmentFlag.AlignBottom)
         line.addWidget(self.next, 0, Qt.AlignmentFlag.AlignBottom)
@@ -180,6 +189,7 @@ class MainWindow(QMainWindow):
             else:
                 page = Page(stage, title, description)
             page.reload.connect(lambda p=page: self.reload_page(p))
+            page.select_sample.connect(self.select_sample)
             self.pages.append(page)
             self.stack.addWidget(page)
         main_layout.addWidget(self.stack, 1)
@@ -241,10 +251,19 @@ class MainWindow(QMainWindow):
         old = self.utterance.currentData()
         if old is None and self.preferences:
             old = self.preferences.value('utterance', 1, type=int)
+        # Ao trocar o locutor nas etapas visuais, não herdar um enunciado sem
+        # sinal quando há outro exemplo disponível desse mesmo locutor.
+        stage = self.pages[self.stack.currentIndex()].stage
+        if stage in ('sinal', 'vad', 'filtragem', 'preenfase'):
+            available = [u for u, complete in self.inventory[speaker].items() if complete]
+            has_audio = (stage == 'sinal' and old is not None and dados.audio_source(
+                self.settings, speaker, old, self.manifest, self.track.currentData().name))
+            if available and old not in available and not has_audio:
+                old = available[0]
         self.utterance.blockSignals(True)
         self.utterance.clear()
         for utterance, complete in self.inventory[speaker].items():
-            self.utterance.addItem(f'{utterance:03d}  ·  {"figuras completas" if complete else "MFCC"}', utterance)
+            self.utterance.addItem(f'{utterance:03d} · {"figuras" if complete else "MFCC"}', utterance)
         self.utterance.setCurrentIndex(max(0, self.utterance.findData(old)))
         self.utterance.blockSignals(False)
         self.sample_changed()
@@ -256,13 +275,17 @@ class MainWindow(QMainWindow):
         self.selection = Selection(self.track.currentData(), speaker, utterance, self.inventory,
                                    self.manifest, self.names, self.profile, self.settings)
         self.revision += 1
-        self.previous.setEnabled(self.utterance.currentIndex() > 0)
-        self.next.setEnabled(self.utterance.currentIndex() < self.utterance.count() - 1)
+        self.previous.setEnabled(self.utterance.currentIndex() > 0 or self.speaker.currentIndex() > 0)
+        self.next.setEnabled(self.utterance.currentIndex() < self.utterance.count() - 1
+                             or self.speaker.currentIndex() < self.speaker.count() - 1)
         name = self.names.get(speaker, f'Locutor {speaker}')
         self.breadcrumb.setText(f'{self.track.currentText()}   /   {name}   /   enunciado {utterance:03d}')
         complete = self.inventory[speaker][utterance]
         self.badge.setText('FIGURAS DISPONÍVEIS' if complete else 'MFCC DISPONÍVEL')
         self.training.set_context(self.selection)
+        page = self.pages[self.stack.currentIndex()]
+        if page.stage != 'treino':
+            page.loading('Carregando a gravação selecionada…')
         self.debounce.start()
 
     def navigate(self, index):
@@ -329,11 +352,39 @@ class MainWindow(QMainWindow):
             page.error(str(error))
 
     def step_sample(self, direction, keyboard=False):
-        if keyboard and isinstance(QApplication.focusWidget(), (QLineEdit, QSpinBox)):
-            return
+        if keyboard:
+            focus = QApplication.focusWidget()
+            selector_fields = [s.lineEdit() for s in (self.track, self.speaker, self.utterance)]
+            if isinstance(focus, QSpinBox) or (isinstance(focus, QLineEdit) and
+                    (focus not in selector_fields or focus.isModified())):
+                return
         index = self.utterance.currentIndex() + direction
         if self.utterance.isEnabled() and 0 <= index < self.utterance.count():
             self.utterance.setCurrentIndex(index)
+        elif self.utterance.isEnabled():
+            speaker_index = self.speaker.currentIndex() + direction
+            if 0 <= speaker_index < self.speaker.count():
+                speaker = self.speaker.itemData(speaker_index)
+                utterances = list(self.inventory[speaker])
+                self.select_sample(speaker, utterances[0 if direction > 0 else -1])
+
+    def eventFilter(self, watched, event):
+        # Durante uma busca, as setas editam o texto; após escolher, navegam.
+        if (event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
+                and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier):
+            if event.type() == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            field = watched.lineEdit() if isinstance(watched, QComboBox) else watched
+            if isinstance(field, QLineEdit) and not field.isModified():
+                self.step_sample(1 if event.key() == Qt.Key.Key_Right else -1)
+                return True
+        return super().eventFilter(watched, event)
+
+    def select_sample(self, speaker, utterance):
+        self.speaker.setCurrentIndex(self.speaker.findData(speaker))
+        self.utterance.setCurrentIndex(self.utterance.findData(utterance))
 
     def step_page(self, direction):
         self.navigation.setCurrentRow(max(0, min(len(self.pages) - 1, self.navigation.currentRow() + direction)))
@@ -343,11 +394,11 @@ class MainWindow(QMainWindow):
         self.speaker.lineEdit().selectAll()
 
     def random_complete(self):
-        choices = [(s, u) for s, values in self.inventory.items() for u, yes in values.items() if yes and u <= 4]
+        choices = [(s, u) for s, values in self.inventory.items() for u, yes in values.items()
+                   if yes and (not self.selection or (s, u) != (self.selection.speaker, self.selection.utterance))]
         if choices:
             speaker, utterance = random.choice(choices)
-            self.speaker.setCurrentIndex(self.speaker.findData(speaker))
-            self.utterance.setCurrentIndex(self.utterance.findData(utterance))
+            self.select_sample(speaker, utterance)
 
     def refresh_data(self):
         dados.clear_cache()

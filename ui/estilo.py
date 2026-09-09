@@ -17,10 +17,17 @@ QLabel#eyebrow { font-size: 10px; font-weight: 700; color: #73869b; }
 QLabel#pageTitle { font-size: 28px; font-weight: 750; color: #162c41; }
 QLabel#muted { color: #72849a; }
 QLabel#description { color: #586d82; font-size: 13px; }
+QLabel#legendTrain { color: #138f82; font-weight: 600; font-size: 11px; padding: 0 6px; }
+QLabel#legendValidation { color: #7e72c4; font-weight: 600; font-size: 11px; padding: 0 6px; }
 QLabel#chip { background: #e1f4ee; color: #257763; padding: 6px 10px; border-radius: 10px; font-size: 11px; }
 QLabel#notice { background: #e9f1fa; color: #395b7d; border: 1px solid #d4e3f2; border-radius: 8px; padding: 13px; }
 QLabel#warning { background: #fff5e4; color: #825d24; border: 1px solid #f0dfbf; border-radius: 8px; padding: 13px; }
 QFrame#card { background: white; border: 1px solid #e0e7ef; border-radius: 10px; }
+QFrame#historyCard { background: white; border: 1px solid #dce6ee; border-radius: 12px; }
+QTabWidget#experimentSections::pane { border: none; padding-top: 12px; }
+QTabBar::tab { background: transparent; color: #71849a; padding: 11px 15px; margin-right: 5px; border-bottom: 3px solid transparent; font-weight: 600; }
+QTabBar::tab:selected { color: #167f79; border-bottom-color: #23998d; }
+QTabBar::tab:hover:!selected { background: #e8f0f6; border-radius: 5px; color: #35576f; }
 QLabel#cardTitle { font-size: 14px; font-weight: 650; color: #223b51; }
 QLabel#stat { font-size: 28px; font-weight: 750; color: #19394d; }
 QPushButton { background: white; border: 1px solid #d5dfe9; padding: 8px 13px; border-radius: 6px; font-weight: 550; }
@@ -39,6 +46,7 @@ QScrollArea, QStackedWidget { background: transparent; border: none; }
 QScrollArea > QWidget > QWidget { background: transparent; }
 QScrollBar:vertical { border: none; background: transparent; width: 9px; margin: 2px; }
 QScrollBar::handle:vertical { background: #c4d0dd; min-height: 28px; border-radius: 3px; }
+QScrollBar::handle:vertical:hover { background: #8ca8bd; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QTableWidget { background: white; alternate-background-color: #f6f9fc; border: 1px solid #e1e8f0; border-radius: 7px; gridline-color: #edf1f6; selection-background-color: #def0eb; selection-color: #233448; }

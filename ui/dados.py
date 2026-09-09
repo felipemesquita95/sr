@@ -169,6 +169,49 @@ def signatures(path: Path) -> dict[str, np.ndarray]:
     return _signatures(path, version(path)) if path.is_file() else {}
 
 
+def audio_source(settings, speaker, utterance, manifest, track_name):
+    """Resolve áudio existente sem renumerar um corpus VCTK parcialmente presente."""
+    if settings is None:
+        return None
+    if settings.dataset_format == 'brsd':
+        from sr.datasets.index import build_index
+        if not settings.audio_path.is_dir():
+            return None
+        return next((r.path for r in build_index(settings)
+                     if (r.speaker, r.utterance) == (speaker, utterance)), None)
+    name = manifest.get('locutores', {}).get(str(speaker))
+    phrase = manifest.get('enunciados', {}).get(name, {}).get(str(utterance))
+    mic = track_name.rsplit('_', 1)[-1]
+    if not name or not phrase or mic not in ('mic1', 'mic2') or not settings.vctk_root:
+        return None
+    path = settings.vctk_root / name / f'{name}_{phrase}_{mic}.flac'
+    return path if path.is_file() else None
+
+
+def raw_signal(path):
+    """Lê áudio real e prepara uma prévia limitada em tamanho, sem gravar artefatos.
+
+    O envelope preserva mínimos e máximos de cada bloco; o espectro preserva
+    o pico de cada faixa. A FFT usa o sinal inteiro, não o envelope reduzido.
+    """
+    import soundfile as sf
+    from scipy.fft import rfft, rfftfreq
+    audio, rate = sf.read(path, dtype='float32', always_2d=True)
+    audio = audio.mean(axis=1)
+    count = len(audio)
+    if not count or not np.isfinite(audio).all():
+        raise ValueError(f'Áudio vazio ou inválido: {path}')
+    block = max(1, (count + 5999) // 6000)
+    starts = np.arange(0, count, block)
+    spectrum = np.abs(rfft(audio))
+    frequencies = rfftfreq(count, 1 / rate)
+    bins = np.arange(0, len(spectrum), max(1, (len(spectrum) + 5999) // 6000))
+    return dict(source=path, rate=rate, samples=count, duration=count / rate,
+                time=starts / rate, low=np.minimum.reduceat(audio, starts),
+                high=np.maximum.reduceat(audio, starts), frequency=frequencies[bins],
+                magnitude=np.maximum.reduceat(spectrum, bins))
+
+
 def manifest_maps(manifest: dict) -> tuple[dict[int, str], dict[str, int]]:
     """Exige correspondência unívoca entre índice interno e nome do locutor.
 

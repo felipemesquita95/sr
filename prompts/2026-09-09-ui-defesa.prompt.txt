@@ -1,0 +1,92 @@
+Trabalhe em `/home/lsmsqt/Documents/sr`. A árvore está limpa no commit `d0f6d88`.
+
+# Objetivo
+
+O autor vai **defender este TCC apresentando a interface ao professor**. Hoje a
+UI (`ui/`, PySide6) percorre o pipeline de sinal em 11 etapas (ver `STAGES` em
+`ui/conteudo.py`) e para em "Resultados", que mostra métricas de treino. Os
+experimentos de diagnóstico — que são a contribuição do trabalho — **não
+aparecem em lugar nenhum**, apesar de estarem todos em disco.
+
+Sua tarefa: tornar cada experimento visível, navegável e explicável pela
+interface, com os gráficos construídos a partir dos artefatos.
+
+# Regra inviolável
+
+**Nenhum número pode ser escrito no código.** Todo valor exibido vem de um
+artefato lido de `runs/` em tempo de execução. Se um artefato faltar, a página
+diz qual arquivo falta e como gerá-lo — nunca exibe um valor de fallback, nunca
+copia número de `docs/resultados.md`. O documento existente é explícito: "Todos
+os números vêm dos artefatos em `runs/models/`, e não desta documentação." A
+interface tem de obedecer à mesma regra, senão ela mente na defesa.
+
+# Artefatos a cobrir
+
+Inspecione o esquema real de cada JSON antes de desenhar — não presuma campos.
+
+1. `runs/models/matriz9_*/matriz_transferencia.json` (seis arquiteturas) e
+   `runs/models/vctk_transfer_matrix/` — matriz pareada 2x2, três sementes,
+   perda pareada em pontos percentuais.
+2. `runs/models/vctk_static_reference/referencia_estatica.json` — a referência
+   logística contra a distribuição das sementes da CNN.
+3. `runs/models/vctk_cross_mic/diagnostico_travessia/travessia_canal.json` —
+   silêncio / fala / sinal completo, dentro e atravessando a trilha.
+4. `runs/models/sessao_ou_transdutor/sessao_ou_transdutor.json` — recuperação
+   por transformação afim.
+5. `runs/models/vctk_transfer_matrix/estrutura_erros/estrutura_erros.json` —
+   excesso de confusão por gênero e sotaque, revocação por locutor.
+6. `runs/models/controle_permutacao_*` e
+   `runs/models/verificacao_alinhamento/alinhamento.json` — os controles.
+7. `runs/models/vctk_cross_mic*` — protocolos auxiliares: direto, inverso,
+   disjunto, sem VAD.
+8. `runs/models/brsd/` — o segundo corpus.
+
+# O que cada página precisa ter
+
+- **A pergunta** que o experimento responde, em uma frase.
+- **O gráfico**, em matplotlib, com a barra de ferramentas já usada no projeto.
+  Distribuições por locutor devem ser distribuições, não médias: a seção 5.2 de
+  `docs/resultados.md` mostra que a média não descreve nenhum locutor.
+- **Como foi feito**: o comando exato de reprodução, o perfil/config, as
+  sementes, os tamanhos de treino/validação/teste e o nível do acaso — lidos dos
+  artefatos `configuracao.json` / `divisao.json` quando existirem.
+- **A procedência**: o caminho em disco de onde cada número saiu, visível.
+- **A ressalva**: o que aquele resultado **não** estabelece. Extraia de
+  `docs/resultados.md` e `docs/limitacoes.md`. Uma página que mostre 38% sem a
+  ressalva trai o trabalho inteiro, cuja tese é justamente não exceder os
+  controles. A ressalva não é rodapé: é parte da evidência.
+
+# Roteiro da defesa
+
+Acrescente uma página de abertura que encadeie o argumento na ordem em que ele
+deve ser contado, com navegação direta para cada evidência: o resultado
+convencional, o que o silêncio sozinho prediz, o que sobra ao trocar o
+microfone, por que essa diferença não é só o transdutor, e por que o patamar das
+redes não era teto do protocolo. Use `docs/resultados.md` como fonte da ordem,
+não invente uma narrativa nova.
+
+# Restrições
+
+- Português em código, comentários, docstrings e documentação. Docstrings no
+  estilo Google, como no resto do repositório.
+- Não quebre nada: hoje são **169 testes passando**. Rode
+  `KERAS_BACKEND=torch QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest`.
+- Acrescente testes no espírito de `tests/test_ui.py`: verifiquem
+  **propriedades**, não valores numéricos. As que importam aqui: que a página
+  não inventa número quando o artefato falta; que o valor exibido é o que está
+  no arquivo; que artefato ausente produz aviso e não exceção.
+- Mantenha o carregamento em segundo plano e o descarte de respostas obsoletas
+  já implementados. A janela não pode travar ao abrir uma página pesada.
+- Atualize `ui/README.md`.
+- **Não faça commits** — o sandbox monta `.git` como somente leitura e vai
+  falhar. Deixe tudo na árvore de trabalho; o commit é feito por fora.
+- Não altere `src/sr/`, `experiments/` nem os artefatos em `runs/`. Esta tarefa
+  é só de interface: ela lê o que já existe.
+
+# Relato final
+
+Em português, ao final da resposta: o que implementou, arquivos criados e
+alterados, o que executou e com quais comandos, quantos testes passam, quais
+artefatos ficaram sem página e por quê, e onde você teve de decidir algo que
+este prompt não especificava. Se algo bloquear, diga o que foi e pare — não
+invente número nem desative teste para fechar a tarefa.

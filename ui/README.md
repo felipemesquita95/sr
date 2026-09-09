@@ -20,7 +20,7 @@ parâmetros e em subprocesso para treinamento.
 
 ## Navegação
 
-Treino e resultados são divididos em seções com rolagens independentes. Em
+Treino, resultados e **Evidências diagnósticas** são divididos em seções com rolagens independentes. Em
 **Resultados → Perda e acurácia**, a partição é escolhida no cabeçalho fixo.
 **Arquiteturas e treino** separa acompanhamento, configuração e inspeção das redes.
 O acompanhamento atualiza as linhas do mesmo gráfico a cada época, preservando
@@ -40,6 +40,14 @@ gráfico. Tabelas e log devolvem a rolagem à página ao alcançar suas extremid
   Ao trocar o locutor, se o enunciado anterior não tiver sinal disponível,
   seleciona um exemplo com figuras do novo locutor; o número aparece no topo.
 - Etapas na lateral; treino e resultados têm páginas próprias.
+- **Roteiro da defesa** abre a sequência argumentativa de `docs/resultados.md` e
+  leva diretamente a **Evidências diagnósticas**. As abas desta página cobrem
+  matrizes de transferência, silêncio, recuperação por transformação afim,
+  estrutura dos erros, controles, protocolos auxiliares e BrSD. Cada gráfico
+  é lido dos JSONs em `runs/models/`, informa seu caminho de procedência e
+  mantém a ressalva documental junto da evidência. Se um relatório faltar, a
+  aba exibe o caminho esperado e pede sua geração; ela não mostra valores
+  substitutos nem deriva medições da documentação.
 - Setas esquerda/direita: gravação anterior/próxima, inclusive após escolher nos
   seletores. Ao chegar ao último enunciado, seguem para o próximo locutor.
   Durante uma busca digitada, as setas editam o texto; `Alt + ←/→` troca a gravação.

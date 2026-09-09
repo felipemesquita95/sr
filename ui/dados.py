@@ -322,6 +322,55 @@ def metrics(root: Path = RUNS / 'models') -> tuple[list[dict], list[str]]:
     return rows, errors
 
 
+def diagnosticos(root: Path = RUNS / 'models') -> dict:
+    """Lê os relatórios que sustentam a defesa sem sintetizar resultados.
+
+    Cada entrada conserva o caminho do arquivo. Arquivos ausentes aparecem na
+    lista ``ausentes`` para que a apresentação explique como recuperar a
+    evidência, em vez de substituir medições por constantes.
+
+    Args:
+        root: Diretório que contém os experimentos persistidos.
+
+    Returns:
+        Relatórios legíveis, resumos auxiliares e caminhos ausentes.
+    """
+    expected = {
+        'travessia': root / 'vctk_cross_mic/diagnostico_travessia/travessia_canal.json',
+        'referencia': root / 'vctk_static_reference/referencia_estatica.json',
+        'sessao': root / 'sessao_ou_transdutor/sessao_ou_transdutor.json',
+        'erros': root / 'vctk_transfer_matrix/estrutura_erros/estrutura_erros.json',
+        'alinhamento': root / 'verificacao_alinhamento/alinhamento.json',
+    }
+    reports = {name: (path, read_json(path)) for name, path in expected.items() if path.is_file()}
+    missing = [path for path in expected.values() if not path.is_file()]
+    matrices = [(path, read_json(path)) for path in sorted(root.glob('matriz9_*/matriz_transferencia.json'))]
+    transfer = root / 'vctk_transfer_matrix/matriz_transferencia.json'
+    if transfer.is_file():
+        matrices.append((transfer, read_json(transfer)))
+    else:
+        missing.append(transfer)
+    summaries = [(path, read_json(path)) for path in sorted(root.glob('vctk_cross_mic*/**/resumo.json'))]
+    summaries += [(path, read_json(path)) for path in sorted(root.glob('controle_permutacao_*/**/resumo.json'))]
+    summaries += [(path, read_json(path)) for path in sorted(root.glob('brsd/*/resumo.json'))]
+    return {'relatorios': reports, 'matrizes': matrices, 'resumos': summaries, 'ausentes': missing}
+
+
+def texto_documento(name: str) -> str:
+    """Devolve a documentação local para ressalvas mostradas na interface.
+
+    Args:
+        name: Nome do arquivo dentro de ``docs``.
+
+    Returns:
+        Texto do documento, ou vazio quando o arquivo não está disponível.
+    """
+    try:
+        return (ROOT / 'docs' / name).read_text(encoding='utf-8')
+    except OSError:
+        return ''
+
+
 @dataclass(frozen=True)
 class FeatureRef:
     """Descreve uma gravação sem manter sua matriz inteira na memória.

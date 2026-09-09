@@ -22,6 +22,7 @@ from ui.componentes import SampleSelector, button, label
 from ui.conteudo import STAGES, Selection, load_stage
 from ui.estilo import STYLE
 from ui.experimentos import ResultsPage, TrainingPage
+from ui.evidencias import DefensePage, EvidencePage
 from ui.paginas import Page, TensorPage
 from ui.tarefas import Tasks
 
@@ -129,7 +130,7 @@ class MainWindow(QMainWindow):
         self.navigation.setObjectName('navigation')
         self.navigation.setSpacing(1)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        short_titles = {'filtragem': 'Filtragem e taxa', 'tensores': 'Tensores',
+        short_titles = {'defesa': 'Roteiro da defesa', 'filtragem': 'Filtragem e taxa', 'tensores': 'Tensores',
                         'protocolos': 'Protocolos', 'assinatura': 'Assinatura', 'treino': 'Redes e treino'}
         for i, (_, title, _) in enumerate(STAGES):
             self.navigation.addItem(f'{i + 1:02d}   {short_titles.get(STAGES[i][0], title)}')
@@ -180,7 +181,12 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.pages = []
         for stage, title, description in STAGES:
-            if stage == 'tensores':
+            if stage == 'defesa':
+                page = DefensePage(stage, title, description)
+                page.navigate_stage.connect(self.navigate_stage)
+            elif stage == 'evidencias':
+                page = EvidencePage(stage, title, description)
+            elif stage == 'tensores':
                 page = TensorPage(stage, title, description, self.profiles, self.tasks)
             elif stage == 'treino':
                 page = self.training = TrainingPage(stage, title, description, self.profiles, self.tasks)
@@ -194,6 +200,15 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         main_layout.addWidget(self.stack, 1)
         layout.addWidget(main, 1)
+
+    def navigate_stage(self, stage, section=''):
+        """Abre uma etapa e sua evidência, usado no roteiro da defesa."""
+        index = next((i for i, item in enumerate(STAGES) if item[0] == stage), None)
+        if index is not None:
+            self.navigation.setCurrentRow(index)
+            page = self.pages[index]
+            if section and isinstance(page, EvidencePage):
+                page.sections.setCurrentIndex(page.section_names.index(section))
 
     def track_changed(self):
         path = self.track.currentData()

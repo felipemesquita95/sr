@@ -71,6 +71,8 @@ STAGES = [
     ('protocolos', 'Protocolos experimentais', 'Cada protocolo responde a uma pergunta diferente sobre o que o sistema aprendeu.'),
     ('treino', 'Arquiteturas e treino', 'Configure um experimento e acompanhe sua evolução enquanto continua explorando os dados.'),
     ('resultados', 'Resultados', 'Compare métricas persistidas, curvas de aprendizado e erros por locutor.'),
+    ('defesa', 'Roteiro da defesa', 'Siga o argumento do trabalho e abra cada evidência diretamente.'),
+    ('evidencias', 'Evidências diagnósticas', 'Experimentos, controles e ressalvas lidos dos artefatos locais.'),
 ]
 
 
@@ -155,6 +157,12 @@ def load_stage(stage, ctx, settings=None, fold=1):
                        matrices=[matrix, FeatureAdjustmentSubsystem.pad_or_truncate(matrix, frames)])
     elif stage == 'resultados':
         payload['metrics'], payload['errors'] = dados.metrics(dados.RUNS / 'models')
+    elif stage == 'defesa':
+        payload['resultados'] = dados.texto_documento('resultados.md')
+    elif stage == 'evidencias':
+        payload['diagnosticos'] = dados.diagnosticos(dados.RUNS / 'models')
+        payload['resultados'] = dados.texto_documento('resultados.md')
+        payload['limitacoes'] = dados.texto_documento('limitacoes.md')
     return payload
 
 

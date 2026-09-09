@@ -71,6 +71,27 @@ def test_missing_signature_condition_is_not_fabricated(tmp_path):
     assert dados.signatures(tmp_path / 'missing.npz') == {}
 
 
+def test_diagnostic_artifacts_keep_the_value_and_their_provenance(tmp_path):
+    report = tmp_path / 'models/matriz9_exemplo/matriz_transferencia.json'
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({'ajustes': [{'perda_acuracia_pp': 7.25}]}))
+    loaded = dados.diagnosticos(tmp_path / 'models')
+    path, value = loaded['matrizes'][0]
+    assert path == report
+    assert value['ajustes'][0]['perda_acuracia_pp'] == json.loads(report.read_text())['ajustes'][0]['perda_acuracia_pp']
+
+
+def test_missing_diagnostic_artifact_is_reported_without_exception(tmp_path, qt_app):
+    from PySide6.QtWidgets import QLabel
+    from ui.evidencias import EvidencePage
+    page = EvidencePage('evidencias', 'Evidências', 'Teste')
+    payload = {'diagnosticos': dados.diagnosticos(tmp_path / 'models'),
+               'resultados': '', 'limitacoes': ''}
+    page.display(payload, None)
+    labels = [item.text() for item in page.findChildren(QLabel)]
+    assert any('Artefato ausente' in text for text in labels)
+
+
 def test_file_cache_invalidation_and_live_progress(tmp_path):
     path = tmp_path / 'progresso.json'
     path.write_text('{"epoca": 1}')

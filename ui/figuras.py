@@ -239,3 +239,51 @@ def comparison(rows):
         ax.legend(frameon=False)
     ax.grid(axis='x', alpha=.12)
     return plot.finish()
+
+
+def distribuicoes(series, title, ylabel='Acurácia (%)'):
+    """Desenha cada distribuição persistida, sem reduzi-la a uma média.
+
+    Args:
+        series: Pares de legenda e valores em escala unitária ou percentual.
+        title: Título da evidência.
+        ylabel: Rótulo do eixo vertical.
+
+    Returns:
+        Painel matplotlib com pontos individuais e caixas de distribuição.
+    """
+    plot = Plot(title=title, height=360)
+    ax = plot.figure.subplots()
+    labels, values = zip(*[(name, np.asarray(value, dtype=float)) for name, value in series if len(value)])
+    scale = np.asarray([item for group in values for item in group])
+    factor = 100 if np.nanmax(np.abs(scale)) <= 1 else 1
+    positions = np.arange(len(values))
+    ax.boxplot([value * factor for value in values], positions=positions, labels=labels, showmeans=False)
+    for position, value in zip(positions, values):
+        ax.scatter(np.full(len(value), position), value * factor, alpha=.45, color='#168f83', s=12)
+    ax.set(ylabel=ylabel)
+    ax.grid(axis='y', alpha=.15)
+    return plot.finish()
+
+
+def barras(registros, title, ylabel='Percentual'):
+    """Mostra medidas heterogêneas já calculadas pelo experimento.
+
+    Args:
+        registros: Pares de legenda e valor em escala unitária ou percentual.
+        title: Título da evidência.
+        ylabel: Rótulo do eixo vertical.
+
+    Returns:
+        Painel matplotlib com valores rotulados a partir dos artefatos.
+    """
+    plot = Plot(title=title, height=340)
+    ax = plot.figure.subplots()
+    names, raw = zip(*registros)
+    values = np.asarray(raw, dtype=float)
+    factor = 100 if np.nanmax(np.abs(values)) <= 1 else 1
+    ax.bar(np.arange(len(values)), values * factor, color='#23968b')
+    ax.set_xticks(np.arange(len(values)), names, rotation=20, ha='right')
+    ax.set(ylabel=ylabel)
+    ax.grid(axis='y', alpha=.15)
+    return plot.finish()

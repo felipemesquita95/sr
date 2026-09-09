@@ -124,6 +124,30 @@ modelo pode escolher **onde** olhar, e a identidade se prediz melhor a partir do
 trechos sem fala, atenção temporal é o mecanismo mais capaz de explorar o confundidor
 — não uma defesa contra ele.
 
+### 2.5 Uma referência estática linear supera a CNN nesta divisão
+
+`runs/models/vctk_static_reference` — regressão logística sobre os mesmos
+tensores de 40 MFCCs e 300 quadros de `vctk_transfer_matrix`. Cada gravação vira
+80 números: média e desvio no tempo dos tensores já normalizados pela origem. A
+divisão por enunciado, a repetição/truncamento e a normalização são os da matriz;
+o instrumento confere as estatísticas reconstruídas contra o artefato da CNN.
+
+A grade `C = (0,1; 1; 10)` foi fixada antes da execução e a validação da origem
+selecionou `C = 10` nas duas direções. Acurácia em %, sobre as mesmas 4.305
+gravações de teste por captura:
+
+| treino | teste na origem | teste na outra captura | perda pareada |
+|---|---:|---:|---:|
+| `mic1` | 99,56 | 52,87 | 46,69 pp |
+| `mic2` | 99,12 | 58,44 | 40,67 pp |
+
+Na mesma divisão, as três sementes da CNN ficaram em 33,84–37,54% no sentido
+`mic1 → mic2` e em 41,51–42,93% no inverso. Esta referência não usa uma semente
+CNN escolhida depois: o artefato conserva as três. O resultado refuta, nesta
+representação e divisão, tratar o patamar cruzado da CNN como teto do protocolo.
+Ele não identifica qual coeficiente, banda ou aspecto da sessão causa a vantagem,
+nem demonstra que a ordem temporal seja irrelevante para outros modelos ou dados.
+
 ---
 
 ## 3. Diagnóstico de canal

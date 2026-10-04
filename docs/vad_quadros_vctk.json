@@ -1,0 +1,159 @@
+{
+  "pares": 21523,
+  "limiar_vad_db": 30,
+  "janela_vad_amostras_48k": 2048,
+  "salto_mfcc_ms": 16,
+  "descricao": "VAD nos primeiros 153 quadros; presença no centro do quadro MFCC.",
+  "baixa77_mic1": {
+    "min": 0,
+    "q1": 20.0,
+    "mediana": 41.0,
+    "q3": 54.0,
+    "max": 69,
+    "sem_quadros": 319
+  },
+  "baixa77_mic2": {
+    "min": 0,
+    "q1": 44.0,
+    "mediana": 54.0,
+    "q3": 60.0,
+    "max": 73,
+    "sem_quadros": 66
+  },
+  "baixa153_mic1": {
+    "min": 0,
+    "q1": 24.0,
+    "mediana": 47.0,
+    "q3": 61.0,
+    "max": 119,
+    "sem_quadros": 252
+  },
+  "baixa153_mic2": {
+    "min": 0,
+    "q1": 51.0,
+    "mediana": 61.0,
+    "q3": 68.0,
+    "max": 124,
+    "sem_quadros": 42
+  },
+  "baixa77_comum": {
+    "min": 0,
+    "q1": 16.0,
+    "mediana": 36.0,
+    "q3": 52.0,
+    "max": 67,
+    "sem_quadros": 523
+  },
+  "voz77_comum": {
+    "min": 4,
+    "q1": 17.0,
+    "mediana": 21.0,
+    "q3": 29.0,
+    "max": 77,
+    "sem_quadros": 0
+  },
+  "baixa153_comum": {
+    "min": 0,
+    "q1": 19.0,
+    "mediana": 40.0,
+    "q3": 58.0,
+    "max": 119,
+    "sem_quadros": 422
+  },
+  "voz153_comum": {
+    "min": 24,
+    "q1": 79.0,
+    "mediana": 89.0,
+    "q3": 96.0,
+    "max": 153,
+    "sem_quadros": 0
+  },
+  "elegiveis_base_77": {
+    "1": {
+      "pares": 21000,
+      "locutores": 108,
+      "minimo_por_locutor": 112,
+      "locutores_com_20_ou_mais": 108
+    },
+    "5": {
+      "pares": 19601,
+      "locutores": 108,
+      "minimo_por_locutor": 84,
+      "locutores_com_20_ou_mais": 108
+    },
+    "10": {
+      "pares": 18026,
+      "locutores": 108,
+      "minimo_por_locutor": 43,
+      "locutores_com_20_ou_mais": 108
+    },
+    "20": {
+      "pares": 6780,
+      "locutores": 108,
+      "minimo_por_locutor": 10,
+      "locutores_com_20_ou_mais": 98
+    },
+    "30": {
+      "pares": 928,
+      "locutores": 87,
+      "minimo_por_locutor": 0,
+      "locutores_com_20_ou_mais": 14
+    },
+    "40": {
+      "pares": 0,
+      "locutores": 0,
+      "minimo_por_locutor": 0,
+      "locutores_com_20_ou_mais": 0
+    },
+    "50": {
+      "pares": 0,
+      "locutores": 0,
+      "minimo_por_locutor": 0,
+      "locutores_com_20_ou_mais": 0
+    }
+  },
+  "elegiveis_base_153": {
+    "1": {
+      "pares": 17755,
+      "locutores": 108,
+      "minimo_por_locutor": 92,
+      "locutores_com_20_ou_mais": 108
+    },
+    "5": {
+      "pares": 16809,
+      "locutores": 108,
+      "minimo_por_locutor": 77,
+      "locutores_com_20_ou_mais": 108
+    },
+    "10": {
+      "pares": 15655,
+      "locutores": 108,
+      "minimo_por_locutor": 39,
+      "locutores_com_20_ou_mais": 108
+    },
+    "20": {
+      "pares": 13591,
+      "locutores": 108,
+      "minimo_por_locutor": 13,
+      "locutores_com_20_ou_mais": 105
+    },
+    "30": {
+      "pares": 11521,
+      "locutores": 108,
+      "minimo_por_locutor": 5,
+      "locutores_com_20_ou_mais": 99
+    },
+    "40": {
+      "pares": 9356,
+      "locutores": 108,
+      "minimo_por_locutor": 1,
+      "locutores_com_20_ou_mais": 90
+    },
+    "50": {
+      "pares": 6954,
+      "locutores": 104,
+      "minimo_por_locutor": 0,
+      "locutores_com_20_ou_mais": 72
+    }
+  }
+}

@@ -40,6 +40,40 @@ def test_exact_length_is_unchanged():
     assert np.array_equal(FeatureAdjustmentSubsystem.pad_or_truncate(matrix, 3), matrix)
 
 
+def test_corpus_minimum_uses_shortest_recording_in_any_split():
+    """O perfil mínimo deve ter a mesma largura mesmo se o menor áudio cair no teste."""
+    from sr.config import Settings
+
+    subsystem = FeatureAdjustmentSubsystem(Settings(num_speakers=2, max_frames_cap=-1))
+    train = [(np.ones((2, 8), dtype=np.float32), 0)]
+    validation = [(np.ones((2, 6), dtype=np.float32), 0)]
+    test = [(np.ones((2, 4), dtype=np.float32), 1)]
+
+    split = subsystem._finalize(train, validation, test, label='mínimo')
+
+    assert split.train_x.shape[-1] == 4
+    assert split.validation_x.shape[-1] == 4
+    assert split.test_x.shape[-1] == 4
+
+
+def test_five_fold_validation_uses_sixty_twenty_twenty_per_speaker():
+    """As partições VCTK devem manter teste e validação disjuntos e pareáveis."""
+    from collections import Counter
+    from sr.config import Settings
+
+    adjustment = FeatureAdjustmentSubsystem(
+        Settings(num_folds=5, validation_fold_offset=1))
+    available = list(range(1, 201))
+    roles = [adjustment.fold_roles(available, fold, np.random.default_rng(42))
+             for fold in range(1, 6)]
+
+    assert all(Counter(role.values()) == {'treino': 120, 'validacao': 40, 'teste': 40}
+               for role in roles)
+    assert all(Counter(role[utterance] for role in roles) ==
+               {'treino': 3, 'validacao': 1, 'teste': 1}
+               for utterance in available)
+
+
 def _split_of(items_per_set, permute):
     """Monta os três conjuntos por meio de ``_finalize``, com ou sem permutação."""
     from sr.config import Settings

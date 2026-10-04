@@ -1,109 +1,95 @@
 # SR Studio — aplicativo desktop
 
-Interface Python em janela própria, implementada com PySide6 / Qt Widgets.
-O aplicativo lê os artefatos locais de `runs/`.
+Interface PySide6 / Qt Widgets para apresentar o processamento e inspecionar os
+artefatos locais. Abra com:
 
 ```bash
-.venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python ui/app.py
-```
-
-Ou use o atalho na raiz, que seleciona automaticamente o ambiente virtual:
-
-```bash
+# Ou pelo atalho que seleciona o ambiente virtual:
 python3 abrir_ui.py
 ```
 
-O ambiente do projeto precisa ter Keras 3 e PyTorch. A inspeção de sinais não
-inicializa as redes; o backend torch é carregado sob demanda para a contagem de
-parâmetros e em subprocesso para treinamento.
+O ambiente precisa das dependências de `requirements-dev.txt`, incluindo Keras e
+PyTorch para ler os checkpoints. O aplicativo não treina nem altera os artefatos.
 
-## Navegação
+## Quatro passos
 
-Treino, resultados e **Evidências diagnósticas** são divididos em seções com rolagens independentes. Em
-**Resultados → Perda e acurácia**, a partição é escolhida no cabeçalho fixo.
-**Arquiteturas e treino** separa acompanhamento, configuração e inspeção das redes.
-O acompanhamento atualiza as linhas do mesmo gráfico a cada época, preservando
-o painel e a posição de leitura.
+| Passo | Seções | Seleção da gravação |
+|---|---|---|
+| Sinal | Corpus, sinal original, pré-processamento | Visível |
+| MFCC | Matriz e derivadas, assinatura de canal | Visível |
+| Rede | Arquiteturas, montagem dos tensores | Visível |
+| Resultado | Resultado principal, comparar experimentos, evidências, ressalvas | Oculta |
 
-A roda do mouse sobre campos não altera seleções ou números. Sobre os gráficos,
-ela rola a página; para ampliar uma região, use a ferramenta de zoom na barra do
-gráfico. Tabelas e log devolvem a rolagem à página ao alcançar suas extremidades.
+Use os botões Anterior/Próximo ou `Alt + ↑/↓`. As seções conservam suas próprias
+rolagens ao alternar entre elas. Resultado principal mantém visão geral, curvas de
+perda/acurácia e matriz/erros. Uma única instância de Evidências contém Matrizes,
+Silêncio e travessia, Sessão ou transdutor, Estrutura dos erros, Controles,
+Protocolos auxiliares e BrSD. Seus atalhos abrem a seção pertinente de MFCC.
 
-- Seleção fixa no topo: trilha, locutor com busca e enunciado.
-- Para selecionar digitando, confirme com Enter ou saia do campo. O locutor
-  aceita índice (`4`, `004`) ou nome exato (`p228`); o enunciado aceita seu número.
-  Entradas inexistentes restauram a seleção anterior com um aviso, sem deixar
-  um número no campo enquanto outro áudio é exibido.
-- Nas etapas de sinal, **Figuras salvas deste locutor** lista os enunciados
-  realmente presentes para aquela etapa, sem trocar o locutor escolhido.
-  Ao trocar o locutor, se o enunciado anterior não tiver sinal disponível,
-  seleciona um exemplo com figuras do novo locutor; o número aparece no topo.
-- Etapas na lateral; treino e resultados têm páginas próprias.
-- **Roteiro da defesa** abre a sequência argumentativa de `docs/resultados.md` e
-  leva diretamente a **Evidências diagnósticas**. As abas desta página cobrem
-  matrizes de transferência, silêncio, recuperação por transformação afim,
-  estrutura dos erros, controles, protocolos auxiliares e BrSD. Cada gráfico
-  é lido dos JSONs em `runs/models/`, informa seu caminho de procedência e
-  mantém a ressalva documental junto da evidência. Se um relatório faltar, a
-  aba exibe o caminho esperado e pede sua geração; ela não mostra valores
-  substitutos nem deriva medições da documentação.
-- Setas esquerda/direita: gravação anterior/próxima, inclusive após escolher nos
-  seletores. Ao chegar ao último enunciado, seguem para o próximo locutor.
-  Durante uma busca digitada, as setas editam o texto; `Alt + ←/→` troca a gravação.
-- `Alt + ↑/↓`: etapa anterior/próxima; `Ctrl + F`: buscar locutor.
-- `Ctrl + R`: atualizar os artefatos e invalidar os caches.
-- **Amostra completa**: sorteia outra gravação com figuras, sem repetir a seleção atual.
-- PNGs: botões de zoom, arrastar, ajustar e ampliar em uma janela maior.
-- Gráficos: barra matplotlib para zoom, deslocamento e exportação. Os MFCCs
-  pareados compartilham a escala de cor.
+Escolha trilha, locutor e enunciado no topo. `Ctrl + F` foca a busca de locutor.
+Confirme a entrada com Enter ou saia do campo; índice e nome exatos são aceitos.
+Uma entrada inexistente restaura a seleção anterior e apresenta um aviso. Não há
+sorteio nem navegação por setas entre gravações. A geometria e a seleção são
+lembradas via `QSettings`.
 
-A aplicação mantém as páginas já desenhadas ao navegar. Leitura de índices,
-decodificação de imagens, montagem das partições, normalização e construção de
-modelos ocorrem em segundo plano. Uma resposta de uma seleção anterior é
-descartada se o usuário trocar de gravação durante o carregamento. Somente a
-página visível desenha seus gráficos. A geometria da janela e a seleção são
-lembradas entre aberturas com `QSettings`.
+A roda sobre campos não troca seleções. Sobre gráficos, rola a página; use a
+barra matplotlib para zoom, deslocamento e exportação. PNGs permitem ampliar,
+arrastar e ajustar. Os MFCCs pareados compartilham a escala de cor.
 
-## Treinamento
+## Parâmetros e ausências
 
-O formulário respeita perfil, arquitetura, limite de partições e épocas. Usa
-`--features-only` para impedir reprocessamento de áudio. A saída do subprocesso
-é lida em outra thread e as últimas 800 linhas aparecem no painel. Um timer
-acompanha o progresso das épocas. Navegar não interrompe o treino.
+Os passos Sinal, MFCC e Rede apresentam os campos da configuração efetiva do
+perfil associado à trilha, com seu caminho. Sinal mostra taxas, VAD e pré-ênfase;
+MFCC mostra quantidade de coeficientes e janela em amostras; Rede mostra protocolo
+e treino, incluindo partições, locutores, enunciados, lote, taxa de aprendizado e
+paciência da parada antecipada. Corpus relaciona a seleção ao manifesto, quando
+existente, e informa a procedência do inventário.
 
-Resultados existentes exigem confirmação antes de sobrescrita. Partições não
-executadas novamente permanecem em disco; confira a origem ao comparar rodadas.
-A janela permite um treino de cada vez, mas não coordena processos iniciados
-externamente. Ao fechar durante um treino, oferece interrompê-lo e aguarda o
-encerramento sem bloquear a janela.
+O perfil atual não é um snapshot histórico. A interface explicita essa diferença
+e não atribui ao arquivo de áudio medições que só constam do perfil. Se não houver
+perfil associado, mostra o aviso e o diretório esperado de configuração; não
+escolhe outro perfil. A partição dos tensores usa o perfil dessa mesma trilha e
+informa que a divisão foi reconstruída das features atuais. Os parâmetros das
+redes vêm dos checkpoints salvos.
 
-## Limites dos artefatos
+Quando faltam PNGs do sinal original, o app procura o áudio da seleção e gera uma
+prévia com taxa, duração e quantidade de amostras lidas do arquivo. Sem áudio ou
+figura, mostra ausência. No pré-processamento, desativar VAD preserva a apresentação
+de filtragem, reamostragem e pré-ênfase.
 
-Em **Sinal bruto**, quando faltam PNGs, o app procura o áudio original da seleção
-e prepara a forma de onda e o espectro em segundo plano, sem alterar artefatos.
-A prévia usa a taxa nativa do arquivo, informa duração e amostras e resume
-extremos/picos para limitar o desenho. No BrSD, a numeração vem do índice do
-projeto; no VCTK, exige a correspondência exata do manifesto, inclusive microfone.
-Isso permite explorar outros locutores do BrSD, cujos PNGs só cobrem o locutor 1.
-Sem o áudio nem o PNG, exibe um aviso e um botão para uma gravação com figuras;
-não reconstrói sinais a partir de MFCCs. As demais etapas iniciais usam PNGs salvos.
-Metadados de processamento vêm dos perfis atuais,
-não de snapshots históricos. A reconstrução dos tensores usa a divisão real do
-sistema e lê apenas as formas das matrizes; estatísticas de normalização são
-calculadas sob solicitação, em duas passagens pelo treino.
+Delta e delta-delta só aparecem se `delta.npy` e `delta_delta.npy` existirem ao lado
+de `mfccs.npy`. Na ausência, a tela mostra os caminhos esperados e explica que o
+perfil que gerou as features não persistiu as derivadas. Elas nunca são calculadas
+pela interface. Se forem disponibilizadas, `Ctrl + R` permite relê-las.
 
-O documento `docs/ui.md` passou a especificar Tkinter. Esta versão usa Qt para
-oferecer a navegação desktop solicitada, com a dependência `PySide6-Essentials`
-declarada em `requirements-dev.txt`; o documento de especificação foi preservado.
+## Comparar experimentos
 
-## Testes
+Em **Resultado → Comparar experimentos**, a tabela recebe todas as linhas de
+`dados.metrics(runs/models)`: experimento, arquitetura, partição, acurácia, F1 macro,
+acaso, classes, amostras de teste e diretório. Cada linha corresponde a um
+`runs/models/<experimento>/<arquitetura>/particao*/metricas.json` legível e completo.
+Não há lista fixa de experimentos nem preenchimento de métricas ausentes.
+
+Clique no cabeçalho para ordenar; as medidas são numéricas na escala do arquivo.
+O filtro textual pesquisa todas as colunas. Selecione duas ou mais linhas com
+Ctrl/Shift para vê-las lado a lado. O contraste mantém uma coluna por registro,
+com diretório visível e caminho de `metricas.json` na dica de cada valor. Filtrar
+retira as linhas ocultas do contraste; limpar o filtro recupera as selecionadas.
+Comparações entre protocolos ou números de classes diferentes ficam permitidas,
+com aviso para interpretar essas diferenças. A comparação não agrega partições.
+
+## Carregamento e testes
+
+Leituras, imagens e montagem das partições ocorrem em segundo plano. Cada carga
+captura a seleção e sua revisão; respostas antigas são descartadas. As páginas
+permanecem em memória e reutilizam o conteúdo ao voltar à mesma seleção. Evidências
+e documentos são carregados uma vez por carga do passo Resultado, que também
+compartilha uma leitura de métricas entre resumo e comparação. `Ctrl + R` invalida
+os caches e relê os artefatos.
 
 ```bash
 KERAS_BACKEND=torch QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest
 ```
 
-Os testes Qt usam o backend offscreen e não exigem servidor gráfico. Cobrem
-navegação, dados ausentes, descarte de respostas antigas, cache de páginas,
-confirmação de sobrescrita e subprocesso interrompível, além das propriedades de
-leitura e particionamento do sistema.
+A especificação e as decisões de composição estão em [`docs/ui.md`](../docs/ui.md).

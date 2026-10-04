@@ -177,7 +177,7 @@ def stat(title, value, detail=''):
     return widget
 
 
-def table(headers, rows, height=300):
+def table(headers, rows, height=300, ordenavel=True):
     """Mantém a ordenação numérica dos valores sem permitir edição dos resultados.
 
     Números são atribuídos ao papel de exibição como números, evitando que
@@ -188,6 +188,7 @@ def table(headers, rows, height=300):
         headers: Títulos das colunas.
         rows: Linhas com valores textuais ou numéricos.
         height: Altura máxima do painel em pixels.
+        ordenavel: Permite ordenar linhas; falso preserva a ordem dos campos.
 
     Returns:
         Tabela de leitura com seleção por linha e ordenação habilitada.
@@ -205,13 +206,16 @@ def table(headers, rows, height=300):
     item.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
     for r, values in enumerate(rows):
         for c, value in enumerate(values):
-            cell = QTableWidgetItem(str(value))
+            cell = QTableWidgetItem()
             if isinstance(value, (int, float)):
                 cell.setData(Qt.ItemDataRole.DisplayRole, value)
+            else:
+                cell.setText(str(value))
             cell.setToolTip(str(value))
             item.setItem(r, c, cell)
-    item.setSortingEnabled(True)
-    item.sortItems(0, Qt.SortOrder.AscendingOrder)
+    item.setSortingEnabled(ordenavel)
+    if ordenavel:
+        item.sortItems(0, Qt.SortOrder.AscendingOrder)
     return item
 
 

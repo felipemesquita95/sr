@@ -34,12 +34,13 @@ class Page(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(28, 22, 28, 16)
         self.layout.setSpacing(12)
-        self.layout.addWidget(label('EXPLORAR O PIPELINE', 'eyebrow'))
-        self.layout.addWidget(label(title, 'pageTitle'))
-        self.layout.addWidget(label(description, 'description'))
+        if title:
+            self.layout.addWidget(label(title, 'pageTitle'))
+        if description:
+            self.layout.addWidget(label(description, 'description'))
         self.controls = QHBoxLayout()
         self.layout.addLayout(self.controls)
-        if stage in ('sinal', 'vad', 'filtragem', 'preenfase'):
+        if stage in ('sinal', 'preprocessamento'):
             self.figure_speaker = None
             self.figure_samples = ChoiceBox()
             self.figure_samples.setObjectName('availableFigures')
@@ -130,7 +131,7 @@ class Page(QWidget):
             else:
                 available = ', '.join(str(u) for u, yes in ctx.inventory[ctx.speaker].items() if yes)
                 self.notice(f'{title}: figura não disponível para esta seleção. '
-                            f'Enunciados com figuras neste locutor: {available or "nenhum"}. '
+                            f'Caminho esperado: {path}. Enunciados com figuras neste locutor: {available or "nenhum"}. '
                             'Esta etapa depende da figura salva ou do áudio original; MFCCs não permitem recuperar o sinal bruto.')
         if any(image.isNull() for _, image, _ in images):
             if self.stage == 'sinal':
@@ -182,7 +183,7 @@ class Page(QWidget):
                                            stat('Gravação', str(ctx.utterance), ctx.names.get(ctx.speaker, f'Locutor {ctx.speaker}'))))
                 self.notice('Estas figuras foram salvas no processamento. A duração exata e o número de amostras '
                             'originais não foram persistidos; MFCCs não recuperam esses valores com precisão.')
-        elif stage == 'vad':
+        elif stage == 'preprocessamento':
             if settings and not settings.enable_vad:
                 self.notice('VAD desativado no perfil desta trilha. As pausas permanecem nas features.')
             elif settings:
@@ -193,12 +194,11 @@ class Page(QWidget):
             if effect:
                 self.content.addWidget(row(stat('Duração idêntica', f'{effect["duracao_identica"]} / {effect["pares"]}'),
                                            stat('Divergência mediana', f'{effect["divergencia_mediana"]:.1%}')))
-        elif stage == 'filtragem' and settings:
-            self.content.addWidget(row(stat('Taxa de origem', f'{settings.source_sampling_rate / 1000:g} kHz'),
-                                       stat('Taxa alvo', f'{settings.target_sampling_rate / 1000:g} kHz'),
-                                       stat('Nyquist alvo', f'{settings.target_sampling_rate / 2000:g} kHz')))
-        elif stage == 'preenfase':
-            self.content.addWidget(stat('Coeficiente de pré-ênfase', str(settings.pre_emphasis_coef) if settings else 'Não registrado'))
+            if settings:
+                self.content.addWidget(row(stat('Taxa de origem', f'{settings.source_sampling_rate / 1000:g} kHz'),
+                                           stat('Taxa alvo', f'{settings.target_sampling_rate / 1000:g} kHz'),
+                                           stat('Nyquist alvo', f'{settings.target_sampling_rate / 2000:g} kHz')))
+                self.content.addWidget(stat('Coeficiente de pré-ênfase', str(settings.pre_emphasis_coef)))
             self.notice('Os espectros existem como imagens. Compare as escalas ao inspecionar o ganho; '
                         'não foram salvas curvas numéricas para uma sobreposição fiel.')
         elif stage == 'mfcc':
@@ -206,12 +206,20 @@ class Page(QWidget):
             self.content.addWidget(row(stat('Coeficientes', str(matrix.shape[0])), stat('Quadros', str(matrix.shape[1])),
                                        stat('Janela / salto', f'{settings.frame_duration_ms:g} / {settings.frame_duration_ms / 2:g} ms' if settings else 'Não registrado')))
             self.content.addWidget(figuras.mfcc(data['matrices'], data['titles']))
+            for origem in data['origens_mfcc']:
+                self.notice(f'Procedência: {origem}')
+            for caminho, derivada in data.get('derivadas', []):
+                if derivada is None:
+                    self.notice(f'Artefato ausente: {caminho}. O perfil que gerou estas features não persistiu '
+                                'esta derivada. A interface não calcula delta nem delta-delta.', True)
+                else:
+                    self.content.addWidget(figuras.mfcc([derivada], [caminho.name]))
+                    self.notice(f'Procedência: {caminho}')
             self.notice('A escala de cor é compartilhada entre as trilhas. Com VAD independente, '
                         'quadros na mesma posição podem corresponder a instantes diferentes.')
         elif stage == 'assinatura':
+            self.notice(f'Procedência: {ctx.sample / "assinaturas.npz"}')
             self.channel(data)
-        elif stage == 'protocolos':
-            self.protocols()
         self.add_images(data.get('images', []), ctx)
         self.content.addStretch()
         self.ready()
@@ -225,6 +233,15 @@ class Page(QWidget):
         Args:
             ctx: Seleção com inventário não vazio, nomes e manifesto da trilha.
         """
+        origem = dados.RUNS / 'features/vctk_manifesto.json'
+        nome = ctx.manifest.get('locutores', {}).get(str(ctx.speaker))
+        enunciado = ctx.manifest.get('enunciados', {}).get(nome, {}).get(str(ctx.utterance))
+        if ctx.manifest:
+            self.notice(f'Manifesto: {origem} · locutor original: {nome or "não registrado"} · '
+                        f'enunciado original: {enunciado or "não registrado"}')
+        elif ctx.track.name.startswith('vctk'):
+            self.notice(f'Manifesto ausente: {origem}', True)
+        self.notice(f'Procedência do inventário: {ctx.track}')
         counts = [len(samples) for samples in ctx.inventory.values()]
         self.content.addWidget(row(stat('Locutores', str(len(counts)), 'Identidades conhecidas'),
                                    stat('Gravações', f'{sum(counts):,}'.replace(',', '.'), ctx.track.name),
@@ -232,7 +249,7 @@ class Page(QWidget):
         widget, layout = card('Uma gravação. Todas as etapas.',
                               'Escolha um locutor e um enunciado no topo. Percorra o sinal pela navegação lateral; '
                               'a seleção acompanha você em todo o aplicativo.')
-        layout.addWidget(label('← →   Trocar enunciado     •     Alt + ↑ ↓   Trocar etapa     •     Ctrl + R   Atualizar', 'muted'))
+        layout.addWidget(label('Alt + ↑ ↓   Trocar etapa     •     Ctrl + F   Buscar locutor     •     Ctrl + R   Atualizar', 'muted'))
         self.content.addWidget(widget)
         excluded = ctx.manifest.get('excluidos', {}).get('locutores_sem_todas_as_trilhas', [])
         if excluded:
@@ -281,24 +298,8 @@ class Page(QWidget):
                                for k, v in report['condicoes'].items()]))
             self.content.addWidget(widget)
         else:
-            self.notice('Diagnóstico de travessia ainda não disponível.')
+            self.notice(f'Diagnóstico de travessia ausente: {dados.RUNS / "models/vctk_cross_mic/diagnostico_travessia/travessia_canal.json"}')
 
-    def protocols(self):
-        """Expõe o que cada comparação controla e o que permanece compartilhado.
-
-        Os avisos evitam interpretar transferência entre transdutores como
-        isolamento causal da voz, ou um controle de permutação como prova universal.
-        """
-        for name, route, explanation in [
-            ('Intra-microfone', 'mic1 → mic1 · enunciados separados', 'Voz e pistas de sessão permanecem associadas. Mede identificação nas condições conhecidas.'),
-            ('Cross-microfone', 'mic1 → mic2 · gravações simultâneas', 'Mede transferência entre transdutores. A sessão e os enunciados são compartilhados; não isola causalmente a voz.'),
-            ('Multi-microfone', 'ambos → ambos · agrupamento por enunciado', 'Expõe cada locutor aos dois microfones, mas mantém a sessão compartilhada entre treino e teste.'),
-            ('Permutação', 'rótulos redistribuídos entre gravações', 'Controle negativo. Desempenho próximo ao acaso é compatível com ausência de sinal aprendível, sem provar ausência de todo vazamento.')]:
-            widget, layout = card(name, route)
-            layout.addWidget(label(explanation))
-            self.content.addWidget(widget)
-        self.notice('Próximo controle proposto: separar também os enunciados no cross-microfone, '
-                    'inverter o sentido da travessia e repetir com diferentes sementes de treino.')
 
 
 class SectionedPage(Page):
@@ -362,8 +363,7 @@ class SectionedPage(Page):
 class TensorPage(Page):
     """Permite inspecionar uma divisão real sem iniciar um treino.
 
-    Perfil e partição próprios permitem verificar como a seleção participa de
-    outros protocolos. Estatísticas caras ficam sob solicitação explícita.
+    A partição pertence ao perfil associado à trilha selecionada. Estatísticas caras ficam sob solicitação explícita.
 
     Args:
         stage: Identificador da etapa no catálogo.
@@ -375,28 +375,11 @@ class TensorPage(Page):
     def __init__(self, stage, title, description, profiles, tasks):
         super().__init__(stage, title, description)
         self.profiles, self.tasks = profiles, tasks
-        self.profile = ChoiceBox()
-        for path in profiles:
-            self.profile.addItem(path.stem, path)
         self.fold = NumberBox()
-        self.fold.setRange(1, 5)
+        self.fold.setMinimum(1)
         self.fold.setPrefix('Partição ')
-        self.controls.addWidget(self.profile, 1)
         self.controls.addWidget(self.fold)
-        self.profile.currentIndexChanged.connect(self.changed)
         self.fold.valueChanged.connect(self.reload)
-        self.changed()
-
-    def changed(self):
-        """Restringe a escolha de partição ao protocolo antes de pedir nova carga.
-
-        Cross-microfone tem uma divisão única; os demais perfis usam seu número
-        configurado de partições.
-        """
-        settings = self.profiles.get(self.profile.currentData())
-        if settings:
-            self.fold.setMaximum(1 if settings.cross_mic else settings.num_folds)
-        self.reload.emit()
 
     def display(self, data, ctx):
         """Mostra os destinos reais e distingue alinhamento ilustrativo de participação.
@@ -424,6 +407,15 @@ class TensorPage(Page):
         else:
             self.content.addWidget(table(['Grupo de enunciados', 'Destino'],
                 [[k, 'Teste' if k == data['fold'] else 'Treino / reserva de validação'] for k in range(1, settings.num_folds + 1)]))
+        grupos = {nome: {(referencia.speaker, referencia.utterance) for referencia in referencias}
+                  for nome, referencias in split.items()}
+        conjuntos = list(grupos)
+        self.content.addWidget(table(['Conjuntos', 'Enunciados compartilhados'],
+            [[f'{origem} / {destino}', len(grupos[origem] & grupos[destino])]
+             for indice, origem in enumerate(conjuntos) for destino in conjuntos[indice + 1:]]))
+        self.notice('A sobreposição acima usa a identidade (locutor, enunciado) dos arquivos da divisão, '
+                    'inclusive entre microfones. Comprimento e estatísticas de normalização são definidos '
+                    'somente pelo treino; validação e teste não ajustam esses parâmetros.')
         destinations = [name for name, refs in split.items() for r in refs
                         if r.path == ctx.sample / 'mfccs.npy']
         self.notice('Seleção atual: ' + (', '.join(destinations) if destinations else 'não participa deste perfil; alinhamento ilustrativo.'))

@@ -147,7 +147,12 @@ class PreprocessingSubsystem:
         import librosa
 
         settings = self.settings
-        audio, sampling_rate = librosa.load(recording.path, sr=settings.source_sampling_rate)
+        # Preserva a taxa nativa: cinco WAVs do BrSD são 44,1 kHz. Converter no
+        # carregamento faria uma reamostragem ocorrer antes do filtro anti-aliasing.
+        audio, sampling_rate = librosa.load(recording.path, sr=None)
+        if sampling_rate != settings.source_sampling_rate:
+            logger.info('Taxa nativa de %s: %d Hz (perfil: %d Hz).',
+                        recording.path, sampling_rate, settings.source_sampling_rate)
 
         if with_figures:
             visualization.plot_waveform(

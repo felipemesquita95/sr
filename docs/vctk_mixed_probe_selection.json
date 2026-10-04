@@ -1,0 +1,21 @@
+{
+  "coorte_10": {
+    "pares": 17272,
+    "locutores": 108,
+    "minimo_por_locutor": 25,
+    "minimo_por_grupo_de_teste": 3,
+    "sha256_gravacoes": "2bb3393d25d339e7cec8692156009f2a6ad1d39935bf294994bb78fa01eb7368"
+  },
+  "coorte_20": {
+    "pares": 17270,
+    "locutores": 108,
+    "minimo_por_locutor": 25,
+    "minimo_por_grupo_de_teste": 3,
+    "sha256_gravacoes": "6d3f6fef592fb3cb49b857e0fb4bbf391920b75abe5d1bdcf77765aedc49fca9"
+  },
+  "condicoes": {
+    "mixed10": "5 quadros de atividade + 5 de baixa atividade, ordenados no tempo",
+    "active20": "20 quadros de atividade, ordenados no tempo",
+    "mixed20": "10 quadros de atividade + 10 de baixa atividade, ordenados no tempo"
+  }
+}

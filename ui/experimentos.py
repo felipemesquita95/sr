@@ -1,21 +1,15 @@
-"""Apresentação e acompanhamento de experimentos independentes da seleção.
+"""Leitura de resultados persistidos."""
 
-A seleção informa a inspeção das arquiteturas, enquanto o treino segue o
-perfil do formulário. Resultados são lidos dos artefatos e filtrados por
-arquitetura e número de classes para evitar comparações incompatíveis.
-"""
 from pathlib import Path
-import shutil
 
 import numpy as np
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView, QLineEdit, QVBoxLayout, QWidget
 
 from ui import dados, figuras
-from ui.componentes import ChoiceBox, NumberBox, LogView, ImagePanel, button, card, label, row, stat, table
-from ui.conteudo import image, model_parameters
-from ui.execucao import TrainingManager, feature_paths, training_command
-from ui.paginas import SectionedPage
+from ui.componentes import ChoiceBox, ImagePanel, button, card, label, row, stat, table
+from ui.conteudo import image
+from ui.paginas import Page, SectionedPage
 
 ARCHITECTURES = {
     'cnn': ('Coeficientes', 'Flatten'),
@@ -27,261 +21,104 @@ ARCHITECTURES = {
 }
 
 
-class TrainingPage(SectionedPage):
-    """Conserva o acompanhamento do processo enquanto o usuário navega pelo pipeline.
+def forma(shape) -> str:
+    """Descreve a forma de um tensor omitindo a dimensão do lote.
 
-    O timer permanece ativo mesmo com a página oculta. A leitura do log não
-    pertence aos widgets; estes apenas consultam o estado do gerenciador.
+    Args:
+        shape: Tupla do Keras, cuja primeira posição é o lote indefinido.
+
+    Returns:
+        Dimensões separadas por ``×``, ou um traço quando a forma é desconhecida.
+    """
+    dimensoes = [str(d) for d in tuple(shape)[1:] if d is not None]
+    return ' × '.join(dimensoes) if dimensoes else '—'
+
+
+class ModelPage(Page):
+    """Mostra as redes treinadas para a trilha: camadas, formas e tamanho.
+
+    A topologia é lida do próprio checkpoint, e não redescrita na interface,
+    para que a página não possa divergir do que foi de fato treinado.
 
     Args:
         stage: Identificador da etapa no catálogo.
         title: Título apresentado na página.
         description: Explicação do estágio para o usuário.
-        profiles: Mapa de arquivos de perfil para configurações.
-        tasks: Gerenciador criado na thread da janela para trabalhos em segundo plano.
     """
-    section_names = ('Acompanhamento', 'Novo experimento', 'Arquiteturas')
-
-    def __init__(self, stage, title, description, profiles, tasks):
+    def __init__(self, stage, title, description):
         super().__init__(stage, title, description)
-        self.profiles, self.tasks = profiles, tasks
-        self.manager = TrainingManager()
-        self.context = None
-        self.last_progress = None
-        self.last_log = ''
-        self.profile = ChoiceBox()
-        for path in profiles:
-            self.profile.addItem(path.stem, path)
+        self.summaries = []
         self.architecture = ChoiceBox()
-        self.architecture.addItems(list(ARCHITECTURES))
-        self.folds, self.epochs = NumberBox(), NumberBox()
-        self.folds.setRange(1, 5)
-        self.folds.setPrefix('Partições: ')
-        self.epochs.setRange(1, 100000)
-        self.epochs.setValue(1000)
-        self.epochs.setPrefix('Épocas: ')
-        self.use_section(1)
-        form, layout = card('Configurar treinamento', 'Escolha o perfil e a rede. Você pode continuar navegando durante o treino.')
-        layout.addWidget(row(self.profile, self.architecture))
-        layout.addWidget(row(self.folds, self.epochs))
-        self.destination = label('', 'muted')
-        layout.addWidget(self.destination)
-        self.disk = label('', 'notice')
-        layout.addWidget(self.disk)
-        self.start_button = button('Iniciar treinamento', self.start, primary=True)
-        self.stop_button = button('Interromper', self.stop)
-        self.stop_button.setObjectName('danger')
-        self.stop_button.setEnabled(False)
-        layout.addWidget(row(self.start_button, self.stop_button))
-        self.content.addWidget(form)
-        self.content.addStretch()
-        self.use_section(0)
-        self.status = label('Nenhum treino iniciado.', 'notice')
-        self.content.addWidget(self.status)
-        actions = row(button('Configurar um experimento', lambda: self.sections.setCurrentIndex(1)),
-                      button('Ver arquiteturas', lambda: self.sections.setCurrentIndex(2)))
-        self.content.addWidget(actions)
-        self.history_host, self.history_layout = card()
-        self.history_layout.setContentsMargins(0, 0, 0, 0)
-        self.history_title = label('As curvas aparecem após a primeira época concluída.', 'muted')
-        self.history_title.setContentsMargins(16, 10, 16, 0)
-        self.history_plot = figuras.HistoryPlot()
-        self.history_layout.addWidget(self.history_title)
-        self.history_layout.addWidget(self.history_plot)
-        self.content.addWidget(self.history_host)
-        logs, logs_layout = card('Saída do experimento', 'O log pode ser consultado sem interromper o acompanhamento.')
-        self.log = LogView()
-        self.log.setReadOnly(True)
-        self.log.setMaximumBlockCount(800)
-        self.log.setFixedHeight(190)
-        self.log.setPlaceholderText('A saída do experimento aparecerá aqui.')
-        logs_layout.addWidget(self.log)
-        self.content.addWidget(logs)
-        self.content.addStretch()
-        self.use_section(2)
-        models, layout = card('Inspecionar as arquiteturas', 'A contagem é calculada construindo cada rede na CPU, fora da thread da janela.')
-        self.frames = NumberBox()
-        self.frames.setRange(16, 100000)
-        self.frames.setValue(300)
-        self.frames.setPrefix('Quadros: ')
-        self.inspect_button = button('Calcular parâmetros', self.inspect)
-        layout.addWidget(row(self.frames, self.inspect_button))
-        self.model_shape = label('', 'muted')
-        layout.addWidget(self.model_shape)
-        self.model_table = table(['Arquitetura', 'Eixo', 'Agregação', 'Parâmetros'],
-                                [[name, *detail, 'Sob demanda'] for name, detail in ARCHITECTURES.items()])
-        layout.addWidget(self.model_table)
-        layout.addWidget(label('O eixo cepstral ordena bases da DCT. Atenção com viés posicional e Flatten '
-                              'não torna a rede completa invariante à ordem dos coeficientes.', 'muted'))
-        self.content.addWidget(models)
-        self.content.addStretch()
-        self.use_section(0)
-        self.profile.currentIndexChanged.connect(self.profile_changed)
-        self.profile_changed()
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.poll)
-        self.timer.start(700)
+        self.architecture.setMinimumWidth(240)
+        self.controls.addWidget(label('Arquitetura:', 'muted'))
+        self.controls.addWidget(self.architecture)
+        self.controls.addStretch()
+        self.architecture.currentIndexChanged.connect(self.rebuild)
 
-    def set_context(self, ctx):
-        """Atualiza a referência para inspecionar redes sem mudar o treino em andamento.
+    def display(self, data, ctx):
+        """Preenche o seletor preservando a arquitetura escolhida, quando ela persistir.
 
         Args:
-            ctx: Seleção usada para a forma de entrada ilustrativa e número de classes.
+            data: Resumos já lidos dos checkpoints em segundo plano.
+            ctx: Seleção à qual esses artefatos correspondem.
         """
+        self.summaries = data['modelos']
         self.context = ctx
-        self.model_shape.setText(f'Entrada ilustrativa: {ctx.settings.num_mfccs if ctx.settings else "?"} coeficientes '
-                                f'× quadros escolhidos · {len(ctx.inventory)} classes. '
-                                'O comprimento efetivo do treino é calculado na página Tensores.')
+        old = self.architecture.currentText()
+        names = [resumo['arquitetura'] for resumo in self.summaries]
+        self.architecture.blockSignals(True)
+        self.architecture.clear()
+        self.architecture.addItems(names)
+        if old in names:
+            self.architecture.setCurrentText(old)
+        self.architecture.blockSignals(False)
+        self.architecture.setEnabled(len(names) > 1)
+        self.rebuild()
 
-    def profile_changed(self):
-        """Expõe os limites e o destino do perfil antes de iniciar o experimento.
-
-        A consulta de espaço usa o ancestral existente do destino, que ainda pode
-        não ter sido criado. Cross-microfone restringe o formulário a uma partição.
-        """
-        settings = self.profiles.get(self.profile.currentData())
-        if not settings:
-            self.start_button.setEnabled(False)
+    def rebuild(self):
+        """Redesenha a arquitetura escolhida sem repetir a leitura dos checkpoints."""
+        if not hasattr(self, 'context'):
             return
-        self.folds.setMaximum(1 if settings.cross_mic else settings.num_folds)
-        self.epochs.setValue(settings.epochs)
-        self.destination.setText(f'Destino: {settings.models_path}')
-        ancestor = settings.models_path
-        while not ancestor.exists():
-            ancestor = ancestor.parent
-        free = shutil.disk_usage(ancestor).free / 1024 ** 3
-        self.disk.setText(f'{free:.2f} GiB livres · Modelos e relatórios consomem espaço a cada partição. '
-                         'Resultados existentes exigirão confirmação de sobrescrita.')
-
-    def start(self):
-        """Valida as condições locais antes de entregar o treino ao gerenciador.
-
-        A presença de artefatos no destino exige confirmação porque as partições
-        escolhidas podem ser sobrescritas. Features ausentes, espaço insuficiente
-        ou outro treino ativo são relatados sem iniciar um novo processo.
-        """
-        settings = self.profiles.get(self.profile.currentData())
-        if not settings:
+        self.reset_body()
+        if not self.summaries:
+            self.notice('Nenhum modelo treinado foi encontrado para o perfil desta trilha. '
+                        'Os resumos aparecem quando existir um arquivo modelo.keras em runs/models/.', True)
+            self.content.addStretch()
+            self.ready()
             return
-        if self.manager.job and self.manager.job.process.poll() is None:
-            self.status.setText('Já existe um treino ativo nesta janela.')
-            return
-        missing = [str(p) for p in feature_paths(settings) if p is None or not p.is_dir()]
-        if missing:
-            self.status.setText('Features indisponíveis: ' + ', '.join(missing))
-            return
-        output = settings.models_path
-        ancestor = output
-        while not ancestor.exists():
-            ancestor = ancestor.parent
-        if shutil.disk_usage(ancestor).free < 100 * 1024 ** 2:
-            self.status.setText('Menos de 100 MiB livres no destino. Libere espaço antes de treinar.')
-            return
-        if output.exists() and any(output.iterdir()):
-            answer = QMessageBox.question(self, 'Sobrescrever resultados?',
-                f'O destino já contém artefatos:\n{output}\n\n'
-                f'Arquitetura: {self.architecture.currentText()}\nPartições: 1 a {self.folds.value()}\n\n'
-                'Os arquivos dessas partições e o resumo da arquitetura serão sobrescritos. '
-                'Outras partições antigas permanecerão. Continuar?',
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-            if answer != QMessageBox.StandardButton.Yes:
-                self.status.setText('Treino não iniciado. Os resultados existentes foram preservados.')
-                return
-        try:
-            command, env = training_command(self.profile.currentData(), self.architecture.currentText(),
-                                            self.folds.value(), self.epochs.value())
-            job = self.manager.start(command, env, output, self.architecture.currentText())
-        except (OSError, ValueError, RuntimeError) as error:
-            self.status.setText(str(error))
-            return
-        self.last_progress, self.last_log = None, ''
-        self.clear_history()
-        self.status.setText(f'Treinamento iniciado · PID {job.process.pid}')
-        self.sections.setCurrentIndex(0)
-        self.poll()
-
-    def stop(self):
-        """Solicita interrupção sem esperar o término na thread gráfica.
-
-        O timer continuará consultando o processo até observar sua saída.
-        """
-        if self.manager.job:
-            self.manager.job.stop()
-            self.poll()
-
-    def clear_history(self):
-        """Limpa as séries mantendo o canvas, a altura do cartão e a posição de leitura."""
-        self.history_title.setText('As curvas aparecem após a primeira época concluída.')
-        self.history_plot.update_history({}, reset_view=True)
-
-    def poll(self):
-        """Atualiza widgets a partir de uma cópia do log e do progresso recente.
-
-        Executado pelo timer na thread da janela, preserva a posição de leitura
-        do usuário e ignora progresso anterior ao início do processo. O JSON é
-        consultado fora do cache; leituras parciais podem ser repetidas no próximo
-        ciclo sem substituir o último gráfico válido.
-        """
-        job = self.manager.job
-        if not job:
-            return
-        code = job.process.poll()
-        active = code is None
-        self.start_button.setEnabled(not active)
-        self.stop_button.setEnabled(active and not job.stopping)
-        state = 'Interrompendo…' if active and job.stopping else 'Em execução' if active else 'Concluído' if code == 0 else 'Interrompido' if job.stopping else f'Falhou (código {code})'
-        self.status.setText(f'{state} · {job.architecture} · PID {job.process.pid} · {job.output.name}')
-        log = job.lines()
-        if log != self.last_log:
-            scroll = self.log.verticalScrollBar()
-            at_end = scroll.value() >= scroll.maximum() - 8
-            position = scroll.value()
-            self.log.setPlainText(log)
-            scroll.setValue(scroll.maximum() if at_end else position)
-            self.last_log = log
-        try:
-            files = [(p.stat().st_mtime_ns, p) for p in (job.output / job.architecture).glob('particao*/progresso.json')
-                     if p.stat().st_mtime >= job.started]
-            latest = max(files) if files else None
-            if latest and latest != self.last_progress:
-                progress = dados.read_json(latest[1], live=True)
-                if progress:
-                    self.last_progress = latest
-                    self.history_title.setText(f'Partição {progress.get("particao")} · época {progress.get("epoca")} concluída')
-                    self.history_plot.update_history(progress.get('historico', {}))
-        except OSError:
-            pass  # O arquivo pode ser substituído atomicamente durante o timer.
-
-    def inspect(self):
-        """Captura a forma escolhida antes de construir as redes em segundo plano.
-
-        A resposta identifica a seleção do momento do cálculo, pois o usuário
-        pode continuar navegando enquanto a contagem é obtida na CPU.
-        """
-        if not self.context:
-            return
-        ctx = self.context
-        shape = (ctx.settings.num_mfccs if ctx.settings else dados.mfcc(ctx.sample / 'mfccs.npy').shape[0], self.frames.value())
-        classes = len(ctx.inventory)
-        rate = ctx.settings.learning_rate if ctx.settings else .001
-        self.inspect_button.setEnabled(False)
-        self.inspect_button.setText('Construindo na CPU…')
-
-        def finish(result, error):
-            self.inspect_button.setEnabled(True)
-            self.inspect_button.setText('Calcular parâmetros')
-            if error:
-                self.model_shape.setText(error)
-                return
-            self.model_shape.setText(f'Contagem calculada para entrada {shape}, {classes} classes (seleção no momento do cálculo).')
-            from PySide6.QtWidgets import QTableWidgetItem
-            counts = dict(result)
-            self.model_table.setSortingEnabled(False)
-            for r in range(self.model_table.rowCount()):
-                name = self.model_table.item(r, 0).text()
-                self.model_table.setItem(r, 3, QTableWidgetItem(f'{counts.get(name, 0):,}'.replace(',', '.')))
-            self.model_table.setSortingEnabled(True)
-        self.tasks.submit(lambda: model_parameters(shape, classes, rate), finish)
+        chosen = next((r for r in self.summaries if r['arquitetura'] == self.architecture.currentText()),
+                      self.summaries[0])
+        if 'erro' in chosen:
+            self.notice(f'{chosen["arquitetura"]}: não foi possível ler o checkpoint. {chosen["erro"]}', True)
+        else:
+            self.content.addWidget(row(
+                stat('Parâmetros', f'{chosen["parametros"]:,}'.replace(',', '.'), 'Pesos do modelo salvo'),
+                stat('Camadas', str(len(chosen['camadas'])), chosen['arquitetura']),
+                stat('Entrada → saída', f'{forma(chosen["entrada"])}  →  {forma(chosen["saida"])}',
+                     'Coeficientes × quadros  →  locutores')))
+            eixo, agregacao = ARCHITECTURES.get(chosen['arquitetura'], ('Não registrado', 'Não registrado'))
+            widget, layout = card('Camadas, na ordem em que o sinal atravessa a rede',
+                                  f'Convolução sobre: {eixo}   ·   Agregação temporal: {agregacao}')
+            layout.addWidget(table(['#', 'Camada', 'Tipo', 'Saída', 'Parâmetros'],
+                [[i + 1, c['nome'], c['tipo'], forma(c['saida']), f'{c["parametros"]:,}'.replace(',', '.')]
+                 for i, c in enumerate(chosen['camadas'])], 360))
+            self.content.addWidget(widget)
+            self.content.addWidget(label(f'Procedência: {chosen["origem"]}', 'muted'))
+        legiveis = [r for r in self.summaries if 'erro' not in r]
+        if len(legiveis) > 1:
+            widget, layout = card('As arquiteturas treinadas para esta trilha',
+                                  'Mesma entrada e o mesmo número de locutores. O que muda é o tamanho '
+                                  'da rede e como ela resume o tempo.')
+            layout.addWidget(table(['Arquitetura', 'Parâmetros', 'Camadas', 'Convolução sobre', 'Agregação'],
+                [[r['arquitetura'], f'{r["parametros"]:,}'.replace(',', '.'), len(r['camadas']),
+                  *ARCHITECTURES.get(r['arquitetura'], ('Não registrado', 'Não registrado'))] for r in legiveis]))
+            self.content.addWidget(widget)
+            self.content.addWidget(figuras.barras([(r['arquitetura'], r['parametros'] / 1000) for r in legiveis],
+                                                  'Tamanho de cada arquitetura', 'Parâmetros (milhares)'))
+        self.notice('O número de parâmetros mede o tamanho da rede, não a sua capacidade de identificar '
+                    'voz. Compare os resultados persistidos de cada protocolo antes de atribuir o acerto à voz.')
+        self.content.addStretch()
+        self.ready()
 
 
 class ResultsPage(SectionedPage):
@@ -298,7 +135,7 @@ class ResultsPage(SectionedPage):
         profiles: Mapa de arquivos de perfil para configurações.
         tasks: Gerenciador criado na thread da janela para trabalhos em segundo plano.
     """
-    section_names = ('Visão geral', 'Perda e acurácia', 'Matriz e erros', 'Comparar protocolos')
+    section_names = ('Visão geral', 'Perda e acurácia', 'Matriz e erros')
 
     def __init__(self, stage, title, description, profiles, tasks):
         super().__init__(stage, title, description)
@@ -346,9 +183,36 @@ class ResultsPage(SectionedPage):
             elif combo is self.classes:
                 combo.setCurrentIndex(len(values) - 1)
             combo.blockSignals(False)
+        self.alinhar_selecao(ctx)
         self.rebuild()
-        if data['errors']:
-            self.notice(f'{len(data["errors"])} arquivo(s) de métricas ilegível(is) ou incompleto(s).', True)
+        for caminho in data['errors']:
+            self.notice(f'Métricas ilegíveis ou incompletas: {caminho}', True)
+
+    def alinhar_selecao(self, ctx):
+        """Evita abrir numa combinação sem nenhum resultado persistido.
+
+        A trilha escolhida no topo nem sempre foi treinada: ``vctk_mic2`` tem
+        features mas não tem modelos. O seletor continua listando experimentos
+        pendentes, para que sua ausência fique visível, mas a página não começa
+        em um deles quando existe resultado legível para mostrar.
+
+        Args:
+            ctx: Seleção corrente, usada para preferir o experimento da trilha.
+        """
+        if not self.records:
+            return
+        atual = (self.experiment.currentText(), self.architecture.currentText(), self.classes.currentText())
+        if any((r['experimento'], r['arquitetura'], str(r['num_classes'])) == atual for r in self.records):
+            return
+        preferido = ctx.settings.models_path.name if ctx.settings else ''
+        candidatos = [r for r in self.records if r['experimento'] == preferido] or self.records
+        escolhido = candidatos[0]
+        for combo, valor in ((self.experiment, escolhido['experimento']),
+                             (self.architecture, escolhido['arquitetura']),
+                             (self.classes, str(escolhido['num_classes']))):
+            combo.blockSignals(True)
+            combo.setCurrentText(valor)
+            combo.blockSignals(False)
 
     def rebuild(self):
         """Agrupa partições compatíveis e explicita quando não há desvio estimável.
@@ -369,9 +233,9 @@ class ResultsPage(SectionedPage):
             f1 = np.mean([r['f1_macro'] for r in selected])
             self.content.addWidget(row(stat('Acurácia média', f'{accuracy:.2%}'), stat('F1 macro médio', f'{f1:.4f}'),
                                        stat('Partições disponíveis', str(len(selected)))))
-            self.content.addWidget(table(['Partição', 'Acurácia', 'F1 macro', 'Acaso', 'Vezes o acaso', 'Amostras'],
+            self.content.addWidget(table(['Partição', 'Acurácia', 'F1 macro', 'Acaso', 'Vezes o acaso', 'Amostras', 'Procedência'],
                 [[r['particao'], f'{r["acuracia"]:.2%}', f'{r["f1_macro"]:.4f}', f'{r["acaso"]:.2%}',
-                  f'{r["acuracia"] / r["acaso"]:.1f}×', r['num_amostras_teste']] for r in selected]))
+                  f'{r["acuracia"] / r["acaso"]:.1f}×', r['num_amostras_teste'], r['diretorio']] for r in selected]))
         else:
             self.notice('Ainda não há resultados para este experimento, arquitetura e número de classes.')
         if selected:
@@ -380,24 +244,6 @@ class ResultsPage(SectionedPage):
         self.notice('Uma partição não permite estimar desvio. Confira também VAD, truncamento, '
                     'features e configuração de treino. Cross-microfone compartilha sessão e '
                     'enunciados; não demonstra voz isolada.', True)
-        self.content.addStretch()
-        self.use_section(3)
-        comparisons = []
-        for exp in sorted({r['experimento'] for r in records}):
-            values = [r for r in records if r['experimento'] == exp]
-            accuracies = [r['acuracia'] for r in values]
-            comparisons.append(dict(experiment=exp, mean=np.mean(accuracies),
-                                    std=np.std(accuracies) if len(values) > 1 else None,
-                                    chance=values[0]['acaso'], folds=len(values)))
-        if comparisons:
-            widget, layout = card('A mesma arquitetura, diferentes condições', f'{architecture} · {count} classes')
-            layout.addWidget(figuras.comparison(comparisons))
-            layout.addWidget(table(['Experimento', 'Acurácia', 'Desvio (p.p.)', 'Partições'],
-                [[r['experiment'], f'{r["mean"]:.2%}', f'{r["std"] * 100:.2f}' if r['std'] is not None else 'Não estimável', r['folds']]
-                 for r in comparisons]))
-            self.content.addWidget(widget)
-        if not comparisons:
-            self.notice('Ainda não há resultados comparáveis para esta arquitetura e número de classes.')
         self.content.addStretch()
         old_directory = self.chooser.currentData()
         self.chooser.blockSignals(True)
@@ -470,12 +316,96 @@ class ResultsPage(SectionedPage):
                 self.result_history.update_history(progress.get('historico', {}), reset_view=True)
                 self.result_history.show()
             else:
-                self.curve_message.setText('Histórico numérico não disponível para esta partição.')
+                self.curve_message.setText(f'Histórico numérico ausente: {directory / "progresso.json"}')
             for title, value, path in images:
                 if not value.isNull():
                     self.detail_layout.addWidget(ImagePanel(title, value, path))
                 else:
-                    self.detail_layout.addWidget(label(title + ': artefato indisponível.', 'notice'))
+                    self.detail_layout.addWidget(label(f'{title}: artefato indisponível em {path}.', 'notice'))
             if not (directory / 'modelo.keras').is_file():
                 self.detail_layout.addWidget(label('Métricas disponíveis; o arquivo do modelo não está presente nesta partição.', 'muted'))
         self.tasks.submit(load, finish)
+
+
+class ComparacaoPage(Page):
+    """Permite contrastar registros persistidos sem misturar suas procedências."""
+
+    campos = ('experimento', 'arquitetura', 'particao', 'acuracia', 'f1_macro',
+              'acaso', 'num_classes', 'num_amostras_teste', 'diretorio')
+    titulos = ('Experimento', 'Arquitetura', 'Partição', 'Acurácia', 'F1 macro',
+               'Acaso', 'Classes', 'Amostras de teste', 'Procedência')
+
+    def __init__(self, stage, title, description):
+        super().__init__(stage, title, description)
+        self.filtro = QLineEdit()
+        self.filtro.setPlaceholderText('Filtrar experimento, arquitetura, partição ou diretório…')
+        self.controls.addWidget(self.filtro)
+        self.filtro.textChanged.connect(self.filtrar)
+
+    def display(self, data, ctx):
+        """Exibe cada linha de dados.metrics com valores numéricos ordenáveis.
+
+        Args:
+            data: Métricas e caminhos rejeitados pelo leitor.
+            ctx: Contexto da seleção, sem restringir os experimentos comparáveis.
+        """
+        self.reset_body()
+        self.registros = data['metrics']
+        self.notice('Selecione linhas com Ctrl ou Shift para contrastá-las lado a lado. '
+                    'Acurácia, F1 e acaso usam a escala do arquivo. '
+                    'Protocolos e números de classes diferentes exigem interpretação conjunta.')
+        # A tabela é montada sem ordenação para que a linha ainda corresponda ao
+        # registro: a matriz de transferência gera várias linhas do mesmo
+        # diretório, e só o índice as distingue depois de ordenar ou filtrar.
+        self.tabela = table(self.titulos, [[registro[campo] for campo in self.campos]
+                                          for registro in self.registros], ordenavel=False)
+        self.tabela.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        for linha, registro in enumerate(self.registros):
+            self.tabela.item(linha, 0).setData(Qt.ItemDataRole.UserRole, linha)
+            for coluna in range(self.tabela.columnCount()):
+                self.tabela.item(linha, coluna).setToolTip(registro['arquivo'])
+        self.tabela.setSortingEnabled(True)
+        self.tabela.sortItems(0, Qt.SortOrder.AscendingOrder)
+        self.content.addWidget(self.tabela)
+        self.contraste = table(['Campo'], [])
+        self.content.addWidget(self.contraste)
+        self.tabela.itemSelectionChanged.connect(self.contrastar)
+        if not self.registros:
+            self.notice(f'Métricas ausentes: esperado {dados.RUNS / "models"}/*/*/particao*/metricas.json '
+                        f'ou {dados.RUNS / "models"}/*/matriz_transferencia.json.', True)
+        for caminho in data['errors']:
+            self.notice(f'Métricas ilegíveis ou incompletas: {caminho}', True)
+        self.filtrar(self.filtro.text())
+        self.contrastar()
+        self.content.addStretch()
+        self.ready()
+
+    def filtrar(self, texto):
+        """Filtra todas as colunas e retira do contraste as linhas ocultas.
+
+        Args:
+            texto: Fragmento pesquisado sem distinção de maiúsculas.
+        """
+        if not hasattr(self, 'tabela'):
+            return
+        for linha in range(self.tabela.rowCount()):
+            conteudo = ' '.join(self.tabela.item(linha, coluna).text()
+                                for coluna in range(self.tabela.columnCount()))
+            self.tabela.setRowHidden(linha, texto.casefold() not in conteudo.casefold())
+        self.contrastar()
+
+    def contrastar(self):
+        """Mantém uma coluna por registro selecionado, inclusive após ordenar."""
+        linhas = sorted({indice.row() for indice in self.tabela.selectionModel().selectedRows()
+                         if not self.tabela.isRowHidden(indice.row())})
+        registros = [self.registros[self.tabela.item(linha, 0).data(Qt.ItemDataRole.UserRole)]
+                     for linha in linhas]
+        nova = table(['Campo'] + [f'{r["experimento"]} / {r["arquitetura"]} / {r["particao"]}' for r in registros],
+                     [[titulo] + [r[campo] for r in registros]
+                      for campo, titulo in zip(self.campos, self.titulos)], ordenavel=False)
+        for coluna, registro in enumerate(registros, start=1):
+            for linha in range(nova.rowCount()):
+                nova.item(linha, coluna).setToolTip(registro['arquivo'])
+        self.content.replaceWidget(self.contraste, nova)
+        self.contraste.deleteLater()
+        self.contraste = nova

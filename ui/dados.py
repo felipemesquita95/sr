@@ -318,8 +318,107 @@ def metrics(root: Path = RUNS / 'models') -> tuple[list[dict], list[str]]:
             continue
         rows.append(dict(data, experimento=path.parents[2].name,
                          arquitetura=path.parents[1].name, particao=path.parent.name,
-                         diretorio=str(path.parent)))
+                         diretorio=str(path.parent), arquivo=str(path)))
+    rows.extend(transfer_rows(root))
     return rows, errors
+
+
+def transfer_rows(root: Path = RUNS / 'models') -> list[dict]:
+    """Traduz a matriz de transferência para o mesmo registro das partições.
+
+    A matriz grava um ajuste por origem e semente, com uma célula por trilha de
+    avaliação, em vez de um diretório por partição. Sem esta leitura os
+    experimentos ``matriz9_*`` ficariam fora da comparação, embora sejam a
+    medida mais controlada do trabalho. O ``f1`` das células é macro, conforme
+    ``src/sr/evaluation/metrics.py``, e por isso alimenta ``f1_macro``.
+
+    Args:
+        root: Raiz de modelos e relatórios.
+
+    Returns:
+        Registros com a mesma forma dos lidos de ``metricas.json``.
+    """
+    rows = []
+    for path in sorted(root.glob('*/matriz_transferencia.json')):
+        report = read_json(path)
+        acaso = report.get('acaso')
+        configuracao = read_json(path.parent / 'configuracao.json')
+        arquiteturas = configuracao.get('settings', {}).get('architectures', ())
+        arquitetura = arquiteturas[0] if len(arquiteturas) == 1 else path.parent.name
+        for ajuste in report.get('ajustes', []):
+            suporte = ajuste.get('suporte_por_locutor', ())
+            for destino, celula in ajuste.get('celulas', {}).items():
+                if 'accuracy' not in celula or acaso is None:
+                    continue
+                origem = ajuste.get('origem', '?')
+                rows.append({
+                    'experimento': path.parent.name, 'arquitetura': arquitetura,
+                    'particao': f'{origem} → {destino} · semente {ajuste.get("semente", "?")}',
+                    'acuracia': celula['accuracy'], 'f1_macro': celula.get('f1'),
+                    'acaso': acaso, 'num_classes': len(suporte),
+                    'num_amostras_teste': ajuste.get('tamanhos', {}).get('teste'),
+                    'diretorio': str(path.parent), 'arquivo': str(path)})
+    return rows
+
+
+@lru_cache(maxsize=16)
+def _model_summary(path: Path, stamp) -> dict:
+    """Descreve o modelo salvo mantendo o Keras fora do import deste módulo.
+
+    O import tardio preserva a leitura de artefatos testável sem o arcabouço.
+    ``sr.models`` precisa ser importado para registrar as camadas próprias do
+    projeto antes da desserialização.
+
+    Args:
+        path: Arquivo ``modelo.keras`` de uma partição.
+        stamp: Assinatura de versão; participa da chave sem entrar na leitura.
+
+    Returns:
+        Formas de entrada e saída, total de parâmetros e a lista de camadas.
+    """
+    import keras
+
+    import sr.models  # noqa: F401  (registra PositionalEmbedding e os agrupamentos)
+    model = keras.models.load_model(path, compile=False)
+    camadas = []
+    for layer in model.layers:
+        try:
+            saida = tuple(layer.output.shape)
+        except (AttributeError, ValueError):
+            saida = ()
+        camadas.append({'nome': layer.name, 'tipo': type(layer).__name__,
+                        'saida': saida, 'parametros': layer.count_params()})
+    return {'parametros': model.count_params(), 'camadas': camadas,
+            'entrada': tuple(model.input_shape), 'saida': tuple(model.output_shape)}
+
+
+def model_summaries(settings) -> list[dict]:
+    """Resume uma partição de cada arquitetura treinada para o perfil da trilha.
+
+    Uma partição basta: as partições de uma arquitetura compartilham topologia e
+    diferem apenas nos pesos. Um checkpoint ilegível vira uma entrada com
+    ``erro`` para que a página explique a ausência em vez de perder as demais.
+
+    Args:
+        settings: Configuração da trilha selecionada, ou ``None``.
+
+    Returns:
+        Lista ordenada por arquitetura, cada item com procedência e resumo.
+    """
+    if settings is None:
+        return []
+    resumos = []
+    for directory in sorted(p for p in settings.models_path.glob('*') if p.is_dir()):
+        origem = next(iter(sorted(directory.glob('particao*/modelo.keras'))), None)
+        if origem is None:
+            continue
+        entrada = {'arquitetura': directory.name, 'origem': origem}
+        try:
+            entrada.update(_model_summary(origem, version(origem)))
+        except Exception as error:  # a desserialização do Keras levanta tipos variados
+            entrada['erro'] = f'{type(error).__name__}: {error}'
+        resumos.append(entrada)
+    return resumos
 
 
 def diagnosticos(root: Path = RUNS / 'models') -> dict:
@@ -512,5 +611,5 @@ def clear_cache():
     Além das leituras versionadas, descarta inventários e referências cujas
     chaves não incluem a versão de todos os arquivos da trilha.
     """
-    for function in (_json, _mfcc, _signatures, inventory, references):
+    for function in (_json, _mfcc, _signatures, _model_summary, inventory, references):
         function.cache_clear()

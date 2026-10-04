@@ -11,13 +11,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 
 from sr.config import Settings, load_settings
 from sr.features import FeatureAdjustmentSubsystem
 from ui import dados
-from ui.execucao import TrainingManager, training_command
 
 
 @pytest.fixture
@@ -135,86 +134,6 @@ def test_normalization_matches_training_only(corpus_tree):
     np.testing.assert_allclose(actual.train_x, (expected - mean[None, :, None]) / std[None, :, None], atol=1e-6)
 
 
-def test_training_command_preserves_environment_and_handles_spaces(tmp_path, monkeypatch):
-    profile = tmp_path / 'perfil com espaços.env'
-    profile.write_text('NUM_SPEAKERS=2\n')
-    base = {'MODELS_PATH': '/tmp/output with spaces', 'VALIDATION_SEED': '9', 'PATH': os.environ['PATH']}
-    command, env = training_command(profile, 'cnn', 2, 7, base)
-    assert env['MODELS_PATH'] == base['MODELS_PATH']
-    assert env['VALIDATION_SEED'] == '9'
-    assert env['KERAS_BACKEND'] == 'torch'
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    settings = load_settings(profile)
-    assert settings.architectures == ('cnn',)
-    assert (settings.max_folds, settings.epochs) == (2, 7)
-    assert settings.models_path == Path(base['MODELS_PATH'])
-
-
-def test_training_is_nonblocking_and_can_be_stopped(tmp_path):
-    manager = TrainingManager()
-    command = [sys.executable, '-u', '-c', 'import time; print("started", flush=True); time.sleep(30)']
-    job = manager.start(command, os.environ.copy(), tmp_path, 'test')
-    try:
-        assert job.process.poll() is None
-        with pytest.raises(RuntimeError, match='ativo'):
-            manager.start(command, os.environ.copy(), tmp_path, 'test')
-        deadline = time.monotonic() + 5
-        while 'started' not in job.lines() and time.monotonic() < deadline:
-            time.sleep(.01)
-        assert 'started' in job.lines()
-        job.stop()
-        job.process.wait(timeout=10)
-        assert job.stopping
-    finally:
-        if job.process.poll() is None:
-            job.process.kill()
-            job.process.wait(timeout=5)
-
-
-def test_ui_training_uses_features_without_reading_missing_audio(corpus_tree, monkeypatch):
-    from types import SimpleNamespace
-    import librosa
-    import run_experiment
-    from sr.system import SpeakerRecognitionSystem
-    audio = corpus_tree / 'audio_ausente'
-    features = corpus_tree / 'features/vctk_mic1'
-    profile = corpus_tree / 'perfil.env'
-    profile.write_text(f'DATASET_FORMAT=vctk\nVCTK_ROOT={audio}\n'
-                       f'FEATURES_PATH={features}\nNUM_SPEAKERS=2\n'
-                       'NUM_UTTERANCES=6\nNUM_FOLDS=3\nNUM_MFCCS=4\n')
-    assert not audio.exists()
-    assert (features / '1/1/mfccs.npy').is_file()
-    command, env = training_command(profile, 'cnn', 1, 1, {})
-    monkeypatch.setattr(os, 'environ', env)
-    monkeypatch.setattr(sys, 'argv', command[1:])
-    monkeypatch.setattr(librosa, 'load', lambda *args, **kwargs: pytest.fail('Áudio bruto acessado'))
-    trained = []
-
-    def train(self, architecture, split, fold):
-        trained.append((architecture, split, fold))
-        return SimpleNamespace(accuracy=.5, f1=.5)
-
-    monkeypatch.setattr(SpeakerRecognitionSystem, '_train_and_evaluate', train)
-    monkeypatch.setattr(SpeakerRecognitionSystem, '_write_summary', lambda *args: None)
-    assert run_experiment.main() == 0
-    assert len(trained) == 1
-    architecture, split, fold = trained[0]
-    assert (architecture, fold) == ('cnn', 1)
-    assert split.train_x.shape[1] == 4
-    assert len(split.train_x) + len(split.validation_x) + len(split.test_x) == 12
-
-
-@pytest.mark.parametrize('source', ['profile', 'environment'])
-def test_training_command_respects_preprocess_only(tmp_path, monkeypatch, source):
-    profile = tmp_path / 'perfil.env'
-    profile.write_text('PREPROCESS_ONLY=true\n' if source == 'profile' else '')
-    base = {'PREPROCESS_ONLY': 'true'} if source == 'environment' else {}
-    _, env = training_command(profile, 'cnn', 1, 1, base)
-    monkeypatch.setattr(os, 'environ', env)
-    assert load_settings().preprocess_only
-
-
 @pytest.fixture(scope='session')
 def qt_app():
     app = QApplication.instance() or QApplication([])
@@ -254,31 +173,16 @@ def test_ui_empty_directory(tmp_path, monkeypatch, qt_app):
 
 
 def test_ui_navigation_and_absence_are_visible(window):
-    from PySide6.QtWidgets import QLabel
+    from ui.conteudo import ROTEIRO
     window.speaker.setCurrentIndex(window.speaker.findData(2))
     window.utterance.setCurrentIndex(window.utterance.findData(6))
-    for index, page in enumerate(window.pages):
+    for index, (stage, _, _) in enumerate(ROTEIRO):
+        page = window.page_by_stage[stage]
         window.navigation.setCurrentRow(index)
-        if page.stage != 'treino':
-            wait_until(lambda: page.loaded_key is not None and page.loaded_key[0] == window.selection.key)
-            assert not page.message.isVisible(), page.message.text()
+        wait_until(lambda: page.loaded_key is not None and page.loaded_key[0] == window.selection.key)
+        assert not page.message.isVisible(), page.message.text()
         assert window.selection.speaker == 2
         assert window.selection.utterance == 6
-        if page.stage == 'sinal':
-            assert any('figura não disponível' in item.text() for item in page.findChildren(QLabel))
-        if page.stage == 'assinatura':
-            assert any('Assinaturas não disponíveis' in item.text() for item in page.findChildren(QLabel))
-
-
-def test_ui_requires_confirmation_before_overwriting(window, monkeypatch):
-    page = window.training
-    output = next(iter(page.profiles.values())).models_path
-    output.mkdir(parents=True)
-    (output / 'previous.json').write_text('{}')
-    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.StandardButton.No)
-    monkeypatch.setattr(page.manager, 'start', lambda *args: pytest.fail('Sobrescrita sem confirmação'))
-    page.start()
-    assert 'preservados' in page.status.text()
 
 
 def test_old_background_result_cannot_replace_new_selection(window, monkeypatch):
@@ -288,89 +192,24 @@ def test_old_background_result_cannot_replace_new_selection(window, monkeypatch)
     old_started, release = threading.Event(), threading.Event()
 
     def delayed(stage, ctx, *args):
-        if stage == 'sinal' and ctx.utterance == 1:
+        if stage == 'passo_sinal' and ctx.utterance == 1:
             old_started.set()
             release.wait(timeout=5)
         return real_load(stage, ctx, *args)
 
     monkeypatch.setattr(app_module, 'load_stage', delayed)
-    window.navigation.setCurrentRow(1)
+    window.pages[0].loaded_key = None
+    window.navigate_stage('sinal')
     wait_until(old_started.is_set)
     try:
-        window.step_sample(1)
-        page = window.pages[1]
+        window.select_sample(1, 2)
+        page = window.page_by_stage['sinal']
         wait_until(lambda: page.loaded_key is not None and page.loaded_key[0][2] == 2)
         expected = page.loaded_key
     finally:
         release.set()
     wait_until(lambda: not window.tasks.pending)
     assert page.loaded_key == expected
-
-
-def test_complete_shortcut_and_navigation_reuse_loaded_page(window, corpus_tree):
-    window.inventory[2][3] = True
-    window.random_complete()
-    assert (window.selection.speaker, window.selection.utterance) == (2, 3)
-    wait_until(lambda: window.pages[0].loaded_key and window.pages[0].loaded_key[0] == window.selection.key)
-    original_body = window.pages[0].body
-    window.step_page(1)
-    window.step_page(-1)
-    assert window.pages[0].body is original_body
-
-
-def test_arrow_clicks_change_actual_signal_and_cross_speakers(window):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QImage, QColor
-    from ui.componentes import ImagePanel
-    for speaker, utterance, color in [(1, 5, 'red'), (1, 6, 'green'), (2, 1, 'blue')]:
-        sample = window.selection.track / str(speaker) / str(utterance)
-        for name in ('sinal_original.png', 'espectro_original.png'):
-            image = QImage(80, 40, QImage.Format.Format_RGB32)
-            image.fill(QColor(color))
-            assert image.save(str(sample / name))
-    window.select_sample(1, 5)
-    window.navigation.setCurrentRow(1)
-    page = window.pages[1]
-    for speaker, utterance, color in [(1, 5, 'red'), (1, 6, 'green'), (2, 1, 'blue')]:
-        wait_until(lambda: page.loaded_key and page.loaded_key[0] == window.selection.key)
-        assert (window.selection.speaker, window.selection.utterance) == (speaker, utterance)
-        panels = page.body.findChildren(ImagePanel)
-        assert len(panels) == 2
-        assert panels[0].source == window.selection.sample / 'sinal_original.png'
-        assert panels[0].image.pixelColor(0, 0) == QColor(color)
-        if color != 'blue':
-            QTest.mouseClick(window.next, Qt.MouseButton.LeftButton)
-            assert not page.scroll.isVisible()  # Nunca deixa a imagem anterior na nova seleção.
-    QTest.mouseClick(window.previous, Qt.MouseButton.LeftButton)
-    assert (window.selection.speaker, window.selection.utterance) == (1, 6)
-    # Vários cliques seguidos devem terminar na seleção mais recente, mesmo sem PNG.
-    for _ in range(3):
-        QTest.mouseClick(window.next, Qt.MouseButton.LeftButton)
-    wait_until(lambda: page.loaded_key and page.loaded_key[0] == window.selection.key)
-    assert (window.selection.speaker, window.selection.utterance) == (2, 3)
-    assert not page.body.findChildren(ImagePanel)
-    assert window.previous.isEnabled()
-
-
-def test_keyboard_arrows_after_selector_choice_and_during_search(window):
-    from PySide6.QtCore import Qt
-    window.activateWindow()
-    window.utterance.setFocus()
-    QTest.qWait(30)
-    QTest.keyClick(window.utterance, Qt.Key.Key_Right)
-    assert window.selection.utterance == 2
-    QTest.keyClick(window.utterance, Qt.Key.Key_Left)
-    assert window.selection.utterance == 1
-    field = window.speaker.lineEdit()
-    field.setFocus()
-    field.selectAll()
-    QTest.keyClicks(field, 'speaker')
-    field.setCursorPosition(4)
-    QTest.keyClick(field, Qt.Key.Key_Left)
-    assert field.cursorPosition() == 3
-    assert window.selection.utterance == 1
-    QTest.keyClick(field, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
-    assert window.selection.utterance == 2
 
 
 @pytest.mark.parametrize('query', ['2', '002', 'p226', '2 — p226'])
@@ -408,13 +247,13 @@ def test_selector_commits_on_focus_out_and_rejects_unknown_id(window):
     QTest.qWait(30)
     field.selectAll()
     QTest.keyClicks(field, '2')
-    window.next.setFocus()
+    window.navigation.setFocus()
     QTest.qWait(30)
     assert window.selection.speaker == 2
     field.setFocus()
     field.selectAll()
     QTest.keyClicks(field, '999')
-    window.next.setFocus()
+    window.navigation.setFocus()
     QTest.qWait(30)
     assert window.selection.speaker == 2
     assert window.speaker.currentText() == '2 — p226'
@@ -432,8 +271,8 @@ def test_raw_page_can_open_existing_sample_without_changing_speaker(window):
     # Há figuras desta etapa, mesmo sem o conjunto completo do pipeline.
     assert not window.inventory[2][3]
     window.select_sample(2, 6)
-    window.navigation.setCurrentRow(1)
-    page = window.pages[1]
+    window.navigate_stage('sinal')
+    page = window.page_by_stage['sinal']
     wait_until(lambda: page.loaded_key and page.loaded_key[0] == window.selection.key)
     assert page.figure_samples.count() == 1
     assert page.figure_samples.itemData(0) == 3
@@ -447,7 +286,7 @@ def test_raw_page_can_open_existing_sample_without_changing_speaker(window):
 def test_changing_speaker_on_signal_chooses_available_example(window):
     window.inventory[2][3] = True
     window.select_sample(1, 6)
-    window.navigation.setCurrentRow(1)
+    window.navigate_stage('sinal')
     window.speaker.setCurrentIndex(window.speaker.findData(2))
     assert (window.selection.speaker, window.selection.utterance) == (2, 3)
 
@@ -472,8 +311,8 @@ def test_raw_signal_without_saved_png_uses_selected_brsd_audio(window, tmp_path)
         assert raw['frequency'][np.argmax(raw['magnitude'])] == frequency
         assert len(raw['time']) <= 6000
         assert raw['high'].max() > .49 and raw['low'].min() < -.49
-        window.pages[1].display(payload, ctx)
-        assert not window.pages[1].message.isVisible()
+        window.page_by_stage['sinal'].display(payload, ctx)
+        assert not window.page_by_stage['sinal'].message.isVisible()
 
 
 def test_vctk_audio_mapping_uses_manifest_not_dense_utterance_number(tmp_path):
@@ -498,80 +337,6 @@ def wheel(widget, delta=-120):
     QTest.qWait(20)
 
 
-def test_wheel_does_not_change_experiment_or_numeric_controls(window):
-    from PySide6.QtCore import Qt
-    page = window.training
-    window.navigation.setCurrentRow(9)
-    page.sections.setCurrentIndex(1)
-    controls = [window.track, window.speaker, window.utterance, page.architecture,
-                page.profile, page.folds, page.epochs]
-    for control in controls:
-        control.setFocus()
-        getter = control.currentIndex if hasattr(control, 'currentIndex') else control.value
-        before = getter()
-        wheel(control)
-        assert getter() == before
-    # O teclado continua sendo uma interação explícita válida.
-    page.architecture.setCurrentIndex(0)
-    QTest.keyClick(page.architecture, Qt.Key.Key_Down)
-    assert page.architecture.currentIndex() == 1
-
-
-def test_wheel_over_history_scrolls_page_and_returning_keeps_canvas(window):
-    window.navigation.setCurrentRow(9)
-    page = window.training
-    page.history_plot.update_history({'loss': [2, 1], 'accuracy': [.2, .6]})
-    area = page.areas[0]
-    wait_until(lambda: area.verticalScrollBar().maximum() > 0)
-    scrollbar = area.verticalScrollBar()
-    scrollbar.setValue(0)
-    canvas = page.history_plot.canvas
-    QTest.qWait(60)
-    before = canvas.grab().toImage()
-    wheel(canvas)
-    assert scrollbar.value() > 0
-    for _ in range(3):
-        scrollbar.setValue(scrollbar.maximum())
-        QTest.qWait(20)
-        scrollbar.setValue(0)
-        QTest.qWait(20)
-    assert page.history_plot.canvas is canvas
-    assert canvas.grab().toImage() == before
-
-
-def test_epoch_update_preserves_canvas_and_scroll_position(window, tmp_path):
-    from types import SimpleNamespace
-    page = window.training
-    window.navigation.setCurrentRow(9)
-    directory = tmp_path / 'cnn/particao1'
-    directory.mkdir(parents=True)
-    progress = directory / 'progresso.json'
-    job = SimpleNamespace(process=SimpleNamespace(poll=lambda: None, pid=321),
-                          stopping=False, output=tmp_path, architecture='cnn',
-                          started=0, lines=lambda: 'época concluída\n')
-    page.manager.job = job
-    try:
-        progress.write_text(json.dumps({'epoca': 1, 'particao': 1,
-                            'historico': {'loss': [2], 'accuracy': [.2]}}))
-        page.poll()
-        area = page.areas[0]
-        wait_until(lambda: area.verticalScrollBar().maximum() > 0)
-        bar = area.verticalScrollBar()
-        bar.setValue(bar.maximum() - 20)
-        QTest.qWait(30)
-        before, maximum, canvas = bar.value(), bar.maximum(), page.history_plot.canvas
-        progress.write_text(json.dumps({'epoca': 2, 'particao': 1,
-                            'historico': {'loss': [2, 1], 'accuracy': [.2, .6]}}))
-        page.poll()
-        QTest.qWait(50)
-        assert page.history_plot.canvas is canvas
-        assert bar.maximum() == maximum
-        assert bar.value() == before
-        assert list(page.history_plot.lines['accuracy'].get_ydata()) == [20, 60]
-    finally:
-        page.manager.job = None
-
-
 def test_result_partition_wheel_keeps_curves_and_sections_keep_scroll(window, corpus_tree):
     for fold in (1, 2):
         directory = corpus_tree / f'models/test/cnn/particao{fold}'
@@ -581,8 +346,9 @@ def test_result_partition_wheel_keeps_curves_and_sections_keep_scroll(window, co
             'num_classes': 2, 'num_amostras_teste': 4}))
         (directory / 'progresso.json').write_text(json.dumps({
             'particao': fold, 'epoca': 2, 'historico': {'loss': [2, 1], 'accuracy': [.2, .5]}}))
-    page = window.pages[10]
-    window.navigation.setCurrentRow(10)
+    page = window.page_by_stage['resultados']
+    window.navigate_stage('resultados')
+    page.reload.emit()
     wait_until(lambda: page.loaded_key is not None)
     page.architecture.setCurrentText('cnn')
     page.sections.setCurrentIndex(1)
@@ -595,7 +361,238 @@ def test_result_partition_wheel_keeps_curves_and_sections_keep_scroll(window, co
     assert page.result_history.isVisible()
     page.areas[1].verticalScrollBar().setValue(20)
     previous = page.areas[1].verticalScrollBar().value()
-    page.sections.setCurrentIndex(3)
+    page.sections.setCurrentIndex(0)
     page.sections.setCurrentIndex(1)
     assert page.areas[1].verticalScrollBar().value() == previous
     assert page.result_history.canvas is canvas
+
+
+def test_barra_de_selecao_aparece_apenas_nos_primeiros_tres_passos(window):
+    from ui.conteudo import ROTEIRO
+    for indice, (etapa, _, _) in enumerate(ROTEIRO):
+        window.navigate_stage(etapa)
+        assert window.toolbar.isVisible() == (indice < 3)
+    for etapa in ('corpus', 'modelo', 'tensores', 'assinatura'):
+        window.navigate_stage(etapa)
+        assert window.toolbar.isVisible()
+
+
+def test_roteiro_alcanca_cada_evidencia(window):
+    from ui.conteudo import ROTEIRO
+    assert window.navigation.count() == len(ROTEIRO) == 4
+    assert [titulo for _, titulo, _ in ROTEIRO] == ["Sinal", "MFCC", "Rede", "Resultado"]
+    for index, (stage, _, _) in enumerate(ROTEIRO):
+        window.navigation.setCurrentRow(index)
+        page = window.page_by_stage[stage]
+        wait_until(lambda: page.loaded_key is not None)
+        assert window.stack.currentWidget() is page
+    from ui.evidencias import EvidencePage
+    assert len(window.findChildren(EvidencePage)) == 1
+    for etapa, secao in EvidencePage.stage_sections.items():
+        window.navigate_stage(etapa)
+        page = window.page_by_stage[etapa]
+        assert window.stack.currentWidget() is window.page_by_stage['resultado']
+        assert window.page_by_stage['resultado'].sections.currentWidget() is page
+        assert page.sections.currentIndex() == page.section_names.index(secao)
+        assert page.isVisible()
+        assert not window.toolbar.isVisible()
+
+
+def test_comparacao_le_metricas_ordena_filtra_e_preserva_procedencia(window, monkeypatch):
+    from PySide6.QtCore import QItemSelectionModel, Qt
+    origens = [str(dados.RUNS / f'models/ensaio_{nome}/cnn/particao1') for nome in ('a', 'b', 'c')]
+    registros = [dict(experimento=f'ensaio_{nome}', arquitetura='cnn', particao='particao1',
+                      acuracia=acuracia, f1_macro=acuracia, acaso=.25, num_classes=4,
+                      num_amostras_teste=quantidade, diretorio=origem,
+                      arquivo=f'{origem}/metricas.json')
+                 for nome, acuracia, quantidade, origem in zip(('a', 'b', 'c'), (.9, .75, .6), (100, 20, 3), origens)]
+    chamadas = []
+
+    def ler(raiz):
+        chamadas.append(raiz)
+        return registros, []
+
+    monkeypatch.setattr(dados, 'metrics', ler)
+    window.navigate_stage('comparacao')
+    pagina = window.page_by_stage['comparacao']
+    wait_until(lambda: pagina.loaded_key is not None)
+    assert chamadas == [dados.RUNS / 'models']
+    assert pagina.tabela.rowCount() == len(registros)
+    assert window.page_by_stage['resultados'].records is pagina.registros
+    coluna = pagina.campos.index('num_amostras_teste')
+    pagina.tabela.sortItems(coluna, Qt.SortOrder.AscendingOrder)
+    assert [pagina.tabela.item(linha, coluna).data(Qt.ItemDataRole.DisplayRole)
+            for linha in range(pagina.tabela.rowCount())] == [3, 20, 100]
+    selecao = pagina.tabela.selectionModel()
+    for linha in range(pagina.tabela.rowCount()):
+        selecao.select(pagina.tabela.model().index(linha, 0),
+                       QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    assert pagina.contraste.columnCount() == len(registros) + 1
+    linha_origem = pagina.campos.index('diretorio')
+    linha_acuracia = pagina.campos.index('acuracia')
+    for coluna in range(1, pagina.contraste.columnCount()):
+        origem = pagina.contraste.item(linha_origem, coluna).text()
+        registro = next(r for r in registros if r['diretorio'] == origem)
+        assert pagina.contraste.item(linha_acuracia, coluna).data(Qt.ItemDataRole.DisplayRole) == registro['acuracia']
+        assert pagina.contraste.item(linha_acuracia, coluna).toolTip() == origem + '/metricas.json'
+    pagina.filtro.setText('ensaio_b')
+    assert sum(not pagina.tabela.isRowHidden(linha) for linha in range(pagina.tabela.rowCount())) == 1
+    assert pagina.contraste.item(linha_origem, 1).text() == origens[1]
+    pagina.filtro.clear()
+    assert pagina.contraste.columnCount() == len(registros) + 1
+
+
+def test_matriz_de_transferencia_entra_na_comparacao(tmp_path):
+    raiz = tmp_path / 'models'
+    (raiz / 'matriz9_teste').mkdir(parents=True)
+    (raiz / 'matriz9_teste/configuracao.json').write_text(json.dumps(
+        {'settings': {'architectures': ['attention']}}))
+    (raiz / 'matriz9_teste/matriz_transferencia.json').write_text(json.dumps({
+        'acaso': .25,
+        'ajustes': [{'origem': 'mic1', 'semente': 7,
+                     'tamanhos': {'treino': 8, 'validacao': 2, 'teste': 4},
+                     'suporte_por_locutor': [1, 1, 1, 1],
+                     'celulas': {'mic1': {'accuracy': .9, 'f1': .88},
+                                 'mic2': {'accuracy': .4, 'f1': .35}}}]}))
+    linhas = dados.transfer_rows(raiz)
+    assert [linha['particao'] for linha in linhas] == ['mic1 → mic1 · semente 7', 'mic1 → mic2 · semente 7']
+    travessia = linhas[1]
+    assert travessia['acuracia'] == .4 and travessia['f1_macro'] == .35
+    assert travessia['arquitetura'] == 'attention' and travessia['num_classes'] == 4
+    assert travessia['num_amostras_teste'] == 4 and travessia['acaso'] == .25
+    # A procedência precisa apontar o arquivo real, não um metricas.json inexistente.
+    assert travessia['arquivo'] == str(raiz / 'matriz9_teste/matriz_transferencia.json')
+
+
+def test_comparacao_distingue_linhas_do_mesmo_diretorio(window, monkeypatch):
+    from PySide6.QtCore import QItemSelectionModel, Qt
+    origem = str(dados.RUNS / 'models/matriz_ensaio')
+    # A matriz de transferência emite várias linhas do mesmo diretório. A tabela
+    # é ordenada ao ser montada, então localizar o registro pela linha exige uma
+    # identidade que sobreviva à reordenação.
+    registros = [dict(experimento='matriz_ensaio', arquitetura='attention',
+                      particao=f'mic1 → {destino} · semente 7', acuracia=acuracia,
+                      f1_macro=acuracia, acaso=.25, num_classes=4, num_amostras_teste=4,
+                      diretorio=origem, arquivo=f'{origem}/matriz_transferencia.json')
+                 for destino, acuracia in (('mic2', .4), ('mic1', .9))]
+    monkeypatch.setattr(dados, 'metrics', lambda raiz: (registros, []))
+    window.navigate_stage('comparacao')
+    pagina = window.page_by_stage['comparacao']
+    wait_until(lambda: pagina.loaded_key is not None)
+    coluna = pagina.campos.index('acuracia')
+    pagina.tabela.sortItems(coluna, Qt.SortOrder.AscendingOrder)
+    selecao = pagina.tabela.selectionModel()
+    for linha in range(pagina.tabela.rowCount()):
+        selecao.select(pagina.tabela.model().index(linha, 0),
+                       QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    assert pagina.contraste.columnCount() == 3
+    contrastadas = [pagina.contraste.item(pagina.campos.index('particao'), c).text() for c in (1, 2)]
+    assert contrastadas == ['mic1 → mic2 · semente 7', 'mic1 → mic1 · semente 7']
+    acuracias = [pagina.contraste.item(coluna, c).data(Qt.ItemDataRole.DisplayRole) for c in (1, 2)]
+    assert acuracias == [.4, .9]
+    assert pagina.tabela.item(0, 0).toolTip() == f'{origem}/matriz_transferencia.json'
+
+
+def test_resultado_nao_abre_em_experimento_sem_metricas(window):
+    pagina = window.page_by_stage['resultado'].componentes['resultados']
+    registros = [dict(experimento='ensaio', arquitetura='cnn', particao='particao1',
+                      acuracia=.5, f1_macro=.5, acaso=.25, num_classes=4,
+                      num_amostras_teste=4, diretorio='d', arquivo='d/metricas.json')]
+    pagina.display({'metrics': registros, 'errors': []}, window.selection)
+    # A trilha selecionada não tem modelos treinados; a página precisa cair em
+    # uma combinação que exista, em vez de abrir vazia na frente da banca.
+    assert pagina.experiment.currentText() == 'ensaio'
+    assert pagina.architecture.currentText() == 'cnn'
+    assert pagina.classes.currentText() == '4'
+
+
+def test_ressalvas_saem_sem_marcacao():
+    from ui.evidencias import texto_legivel
+    titulo, corpo = texto_legivel('## 9. O que este documento **não** afirma\n\n'
+                                  '- Que a faixa seja `identidade` vocal.\n'
+                                  '- Que a **barreira** seja do dado.\n'
+                                  '- Nada sobre **sessões\n  diferentes**, que é a limitação.\n\n---')
+    assert titulo == '9. O que este documento não afirma'
+    # A ênfase atravessa a quebra de linha no documento real, e o separador
+    # horizontal não deve virar um traço solto na tela.
+    assert corpo == ('• Que a faixa seja identidade vocal.\n'
+                     '• Que a barreira seja do dado.\n'
+                     '• Nada sobre sessões\n  diferentes, que é a limitação.')
+
+
+def test_resultado_carrega_diagnosticos_uma_vez(window, monkeypatch):
+    from ui.conteudo import load_stage
+    chamadas = []
+    original = dados.diagnosticos
+
+    def ler(raiz):
+        chamadas.append(raiz)
+        return original(raiz)
+
+    monkeypatch.setattr(dados, 'diagnosticos', ler)
+    conteudo = load_stage('resultado', window.selection)
+    assert chamadas == [dados.RUNS / 'models']
+    assert conteudo['evidencias'] is conteudo['limites']
+
+
+def test_derivadas_ausentes_e_persistidas_sem_recalculo(window):
+    from PySide6.QtWidgets import QLabel
+    from ui.conteudo import load_stage
+    ctx = window.selection
+    pagina = window.page_by_stage['mfcc']
+    conteudo = load_stage('mfcc', ctx)
+    assert all(matriz is None for _, matriz in conteudo['derivadas'])
+    pagina.display(conteudo, ctx)
+    textos = '\n'.join(item.text() for item in pagina.body.findChildren(QLabel))
+    for nome in ('delta.npy', 'delta_delta.npy'):
+        caminho = ctx.sample / nome
+        assert str(caminho) in textos
+        assert not caminho.exists()
+        np.save(caminho, np.full_like(conteudo['matrices'][0], ctx.utterance))
+    conteudo = load_stage('mfcc', ctx)
+    for caminho, matriz in conteudo['derivadas']:
+        np.testing.assert_array_equal(matriz, np.load(caminho))
+    pagina.display(conteudo, ctx)
+    textos = '\n'.join(item.text() for item in pagina.body.findChildren(QLabel))
+    assert 'não persistiu' not in textos
+    assert all(str(caminho) in textos for caminho, _ in conteudo['derivadas'])
+
+
+def test_parametros_vem_do_perfil_e_manifesto_da_amostra(window):
+    from PySide6.QtWidgets import QLabel
+    from ui.conteudo import CAMPOS, load_stage
+    ctx = replace(window.selection, settings=replace(window.selection.settings,
+                  source_sampling_rate=32000, target_sampling_rate=16000, frame_size=512,
+                  num_mfccs=17, batch_size=19, learning_rate=.003, early_stopping_patience=7),
+                  manifest={'locutores': {'1': 'p_teste'}, 'enunciados': {'p_teste': {'1': 'frase_original'}}})
+    for etapa, campos in CAMPOS.items():
+        pagina = window.page_by_stage[etapa]
+        pagina.display(load_stage(etapa, ctx, fold=1), ctx)
+        for campo in campos:
+            assert f'{campo}: {getattr(ctx.settings, campo)}' in pagina.parametros.text()
+        assert str(ctx.profile) in pagina.parametros.text()
+    textos = '\n'.join(item.text() for item in window.page_by_stage['corpus'].body.findChildren(QLabel))
+    assert 'p_teste' in textos and 'frase_original' in textos
+    assert str(dados.RUNS / 'features/vctk_manifesto.json') in textos
+
+
+def test_trilha_sem_perfil_nao_recebe_configuracao_padrao(window):
+    from ui.conteudo import CAMPOS, load_stage
+    ctx = replace(window.selection, profile=None, settings=None)
+    assert dados.track_profile(ctx.track, {}) == (None, None)
+    for etapa in CAMPOS:
+        pagina = window.page_by_stage[etapa]
+        pagina.display(load_stage(etapa, ctx, fold=1), ctx)
+        assert 'Sem perfil associado' in pagina.parametros.text()
+        assert str(dados.ROOT / 'configs') in pagina.parametros.text()
+    assert 'Sem perfil associado' in window.page_by_stage['tensores'].message.text()
+
+
+def test_preprocessamento_sem_vad_mantem_etapas_posteriores(window):
+    from ui.conteudo import load_stage
+    ctx = replace(window.selection, settings=replace(window.selection.settings, enable_vad=False))
+    conteudo = load_stage('preprocessamento', ctx)
+    nomes = [caminho.name for _, _, caminho in conteudo['images']]
+    assert 'sinal_vad.png' not in nomes
+    assert nomes == ['sinal_original.png', 'espectro_filtrado.png',
+                     'espectro_reamostrado.png', 'espectro_preenfase.png']

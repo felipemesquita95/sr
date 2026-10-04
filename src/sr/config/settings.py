@@ -74,7 +74,7 @@ class Settings:
     num_utterances: int = 5
 
     # ---- Pré-processamento ----------------------------------------------
-    #: Taxa de amostragem em que os áudios são lidos.
+    #: Taxa nominal do corpus; o carregamento preserva a taxa nativa de cada arquivo.
     source_sampling_rate: int = 48_000
     #: Taxa de amostragem alvo após filtragem e decimação.
     target_sampling_rate: int = 8_000
@@ -94,10 +94,15 @@ class Settings:
     num_folds: int = 5
     #: Limita quantas partições são efetivamente executadas (0 = todas).
     max_folds: int = 0
-    #: Teto para o número de quadros após padding (0 = sem teto). Trava de memória.
+    #: Teto de quadros (0 = sem teto; -1 = menor gravação do corpus/partição).
     max_frames_cap: int = 0
+    #: Descarta gravações com menos quadros MFCC antes de dividir os conjuntos.
+    min_frames: int = 0
     #: Semente do sorteio determinístico do conjunto de validação.
     validation_seed: int = 42
+    #: Usa o grupo seguinte da validação cruzada para validação (20% com 5 grupos).
+    #: Zero conserva a regra de uma gravação sorteada por locutor.
+    validation_fold_offset: int = 0
 
     # ---- Protocolos de diagnóstico ---------------------------------------
     #: Executa apenas o pré-processamento e encerra.
@@ -292,6 +297,13 @@ def _validate(settings: Settings) -> None:
         raise ValueError('num_speakers deve ser ao menos 2 para haver classificação.')
     if settings.num_folds < 2:
         raise ValueError('num_folds deve ser ao menos 2.')
+    if settings.min_frames < 0:
+        raise ValueError('min_frames não pode ser negativo.')
+    # min_frames seleciona gravações pelo comprimento original; max_frames_cap
+    # limita os quadros entregues à rede. A seleção pode exigir gravações mais
+    # longas que a entrada para comparar durações no mesmo subconjunto.
+    if not 0 <= settings.validation_fold_offset < settings.num_folds:
+        raise ValueError('validation_fold_offset deve estar entre 0 e num_folds - 1.')
     if settings.frame_size <= 0 or settings.frame_size & (settings.frame_size - 1):
         raise ValueError('frame_size deve ser uma potência de dois (exigência da FFT).')
     if settings.target_sampling_rate > settings.source_sampling_rate:

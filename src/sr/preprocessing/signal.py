@@ -22,7 +22,7 @@ from scipy.signal import butter, resample_poly, sosfiltfilt
 #: Ordem do filtro Butterworth anti-aliasing.
 ANTIALIAS_ORDER = 8
 
-#: Fração da nova frequência de Nyquist usada como corte, deixando banda de guarda.
+#: Fração da taxa de destino usada como corte (90% da nova frequência de Nyquist).
 ANTIALIAS_CUTOFF_RATIO = 0.45
 
 

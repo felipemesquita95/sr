@@ -59,21 +59,30 @@ class Selection:
         return f'{self.track.name} · {self.names.get(self.speaker, f"Locutor {self.speaker}")} · enunciado {self.utterance:03d}'
 
 
-STAGES = [
-    ('corpus', 'Visão geral', 'Conheça a distribuição das gravações e as condições que definem o experimento.'),
-    ('sinal', 'Sinal bruto', 'A forma de onda e o espectro mostram a gravação antes das transformações.'),
-    ('vad', 'Atividade vocal', 'A detecção por energia remove trechos abaixo de um limiar relativo ao pico de cada trilha.'),
-    ('filtragem', 'Filtragem e reamostragem', 'Filtrar antes de reduzir a taxa evita que altas frequências contaminem a banda útil.'),
-    ('preenfase', 'Pré-ênfase', 'Um filtro de primeira ordem realça as altas frequências antes da extração de características.'),
-    ('mfcc', 'Coeficientes MFCC', 'Explore a representação que as redes recebem e compare a mesma frase entre microfones.'),
-    ('assinatura', 'Assinatura de canal', 'Estatísticas cepstrais revelam pistas associadas ao locutor nos diferentes recortes do sinal.'),
-    ('tensores', 'Montagem dos tensores', 'Inspecione a divisão real dos conjuntos, o alinhamento e as garantias contra vazamento.'),
-    ('protocolos', 'Protocolos experimentais', 'Cada protocolo responde a uma pergunta diferente sobre o que o sistema aprendeu.'),
-    ('treino', 'Arquiteturas e treino', 'Configure um experimento e acompanhe sua evolução enquanto continua explorando os dados.'),
-    ('resultados', 'Resultados', 'Compare métricas persistidas, curvas de aprendizado e erros por locutor.'),
-    ('defesa', 'Roteiro da defesa', 'Siga o argumento do trabalho e abra cada evidência diretamente.'),
-    ('evidencias', 'Evidências diagnósticas', 'Experimentos, controles e ressalvas lidos dos artefatos locais.'),
+ROTEIRO = [
+    ('passo_sinal', 'Sinal', 'Corpus, sinal original e pré-processamento da gravação escolhida.'),
+    ('passo_mfcc', 'MFCC', 'Representação persistida, par entre trilhas e assinatura de canal.'),
+    ('rede', 'Rede', 'Arquiteturas salvas, parâmetros e divisão dos tensores.'),
+    ('resultado', 'Resultado', 'Resultados, comparação de experimentos, evidências e ressalvas.'),
 ]
+STAGES = ROTEIRO
+SELECTION_STAGES = {stage for stage, _, _ in ROTEIRO[:-1]}
+SECOES = {
+    'passo_sinal': (('corpus', 'Corpus'), ('sinal', 'Sinal original'),
+                    ('preprocessamento', 'Pré-processamento')),
+    'passo_mfcc': (('mfcc', 'Matriz e derivadas'), ('assinatura', 'Assinatura de canal')),
+    'rede': (('modelo', 'Arquiteturas'), ('tensores', 'Montagem dos tensores')),
+    'resultado': (('resultados', 'Resultado principal'), ('comparacao', 'Comparar experimentos'),
+                  ('evidencias', 'Evidências'), ('limites', 'Ressalvas')),
+}
+CAMPOS = {
+    'passo_sinal': ('source_sampling_rate', 'target_sampling_rate', 'enable_vad',
+                    'vad_top_db', 'pre_emphasis_coef'),
+    'passo_mfcc': ('num_mfccs', 'frame_size'),
+    'rede': ('num_folds', 'num_speakers', 'num_utterances', 'batch_size',
+             'learning_rate', 'early_stopping_patience', 'cross_mic',
+             'cross_mic_disjoint_utterances', 'both_mics', 'max_frames_cap'),
+}
 
 
 def image(path, title):
@@ -112,17 +121,37 @@ def load_stage(stage, ctx, settings=None, fold=1):
         ValueError: Se faltar perfil para os tensores ou os artefatos forem inválidos.
         OSError: Se uma matriz necessária não puder ser lida.
     """
+    if stage in SECOES:
+        secoes = {}
+        metricas = None
+        evidencia = None
+        for nome, _ in SECOES[stage]:
+            try:
+                if nome in ('resultados', 'comparacao'):
+                    if metricas is None:
+                        metricas = load_stage('resultados', ctx)
+                    secoes[nome] = metricas
+                elif nome in ('evidencias', 'limites'):
+                    if evidencia is None:
+                        evidencia = load_stage('evidencias', ctx)
+                    secoes[nome] = evidencia
+                else:
+                    secoes[nome] = load_stage(nome, ctx, ctx.settings, fold)
+            except (OSError, ValueError) as erro:
+                secoes[nome] = {'erro': str(erro)}
+        return secoes
     payload = {'images': []}
     files = {
         'sinal': [('sinal_original.png', 'Forma de onda original'), ('espectro_original.png', 'Espectro original')],
-        'vad': [('sinal_original.png', 'Antes do VAD'), ('sinal_vad.png', 'Depois do VAD')],
-        'filtragem': [('espectro_filtrado.png', 'Após filtro anti-aliasing'), ('espectro_reamostrado.png', 'Após reamostragem')],
-        'preenfase': [('espectro_reamostrado.png', 'Antes da pré-ênfase'), ('espectro_preenfase.png', 'Depois da pré-ênfase')],
+        'preprocessamento': [('sinal_original.png', 'Antes do VAD'), ('sinal_vad.png', 'Depois do VAD'),
+                              ('espectro_filtrado.png', 'Após filtro anti-aliasing'),
+                              ('espectro_reamostrado.png', 'Após reamostragem'),
+                              ('espectro_preenfase.png', 'Depois da pré-ênfase')],
     }
     if stage in files:
         selected = files[stage]
-        if stage == 'vad' and ctx.settings and not ctx.settings.enable_vad:
-            selected = [('sinal_original.png', 'Sinal preservado • VAD desativado')]
+        if stage == 'preprocessamento' and ctx.settings and not ctx.settings.enable_vad:
+            selected = [('sinal_original.png', 'Sinal preservado • VAD desativado')] + selected[2:]
         payload['images'] = [image(ctx.sample / name, title) for name, title in selected]
         payload['available_figures'] = [u for u in ctx.inventory[ctx.speaker]
             if all((ctx.track / str(ctx.speaker) / str(u) / name).is_file() for name, _ in selected)]
@@ -131,64 +160,41 @@ def load_stage(stage, ctx, settings=None, fold=1):
             if source:
                 payload['raw'] = dados.raw_signal(source)
                 payload['images'] = []
-        if stage == 'vad':
+        if stage == 'preprocessamento':
             payload['alignment'] = dados.read_json(dados.RUNS / 'models/verificacao_alinhamento/alinhamento.json')
     elif stage == 'corpus':
         payload['images'] = [image(ctx.track / '_resumo' / name, title) for name, title in
                              [('duracao.png', 'Duração das gravações'), ('enunciados_por_locutor.png', 'Gravações por locutor')]]
+    elif stage == 'modelo':
+        payload['modelos'] = dados.model_summaries(ctx.settings)
     elif stage == 'mfcc':
         payload['matrices'] = [dados.mfcc(ctx.sample / 'mfccs.npy')]
         payload['titles'] = [ctx.track.name]
+        payload['origens_mfcc'] = [ctx.sample / 'mfccs.npy']
+        payload['derivadas'] = [(ctx.sample / nome, dados.mfcc(ctx.sample / nome)
+                                 if (ctx.sample / nome).is_file() else None)
+                                for nome in ('delta.npy', 'delta_delta.npy')]
         if ctx.track.name.endswith(('_mic1', '_mic2')) and ctx.manifest:
             partner = ctx.track.with_name(ctx.track.name[:-1] + ('2' if ctx.track.name.endswith('1') else '1'))
             file = partner / str(ctx.speaker) / str(ctx.utterance) / 'mfccs.npy'
             if file.is_file():
                 payload['matrices'].append(dados.mfcc(file))
                 payload['titles'].append(partner.name)
+                payload['origens_mfcc'].append(file)
     elif stage == 'assinatura':
         payload['signatures'] = dados.signatures(ctx.sample / 'assinaturas.npz')
         payload['transfer'] = dados.read_json(dados.RUNS / 'models/vctk_cross_mic/diagnostico_travessia/travessia_canal.json')
     elif stage == 'tensores':
         if settings is None:
-            raise ValueError('Escolha um perfil disponível para inspecionar a divisão.')
+            raise ValueError(f'Sem perfil associado a {ctx.track}. Esperado: perfil em {dados.ROOT / "configs"} que referencie esta trilha; divisão indisponível.')
         split, frames = dados.inspect_split(settings, fold)
         matrix = dados.mfcc(ctx.sample / 'mfccs.npy')
         payload.update(split=split, frames=frames, settings=settings, fold=fold,
                        matrices=[matrix, FeatureAdjustmentSubsystem.pad_or_truncate(matrix, frames)])
     elif stage == 'resultados':
         payload['metrics'], payload['errors'] = dados.metrics(dados.RUNS / 'models')
-    elif stage == 'defesa':
-        payload['resultados'] = dados.texto_documento('resultados.md')
-    elif stage == 'evidencias':
+    elif stage in ('evidencias', 'limites'):
         payload['diagnosticos'] = dados.diagnosticos(dados.RUNS / 'models')
         payload['resultados'] = dados.texto_documento('resultados.md')
         payload['limitacoes'] = dados.texto_documento('limitacoes.md')
     return payload
-
-
-def model_parameters(shape, classes, rate):
-    # Importar/compilar as redes ocorre apenas após solicitação e fora da janela.
-    """Calcula contagens para a forma escolhida sem ocupar a GPU do treino.
-
-    Keras e as redes só são importados sob demanda. Cada modelo é descartado
-    antes do próximo, evitando acumular as seis arquiteturas na memória.
-
-    Args:
-        shape: Forma de entrada sem o eixo de lote.
-        classes: Número de locutores de saída.
-        rate: Taxa de aprendizado usada na construção do modelo.
-
-    Returns:
-        Pares de nome de arquitetura e número de parâmetros.
-    """
-    import torch
-    from keras import backend
-    from sr.models import ARCHITECTURES, build_model
-    result = []
-    with torch.device('cpu'):
-        for architecture in ARCHITECTURES:
-            model = build_model(architecture, shape, classes, rate)
-            result.append((architecture, model.count_params()))
-            del model
-            backend.clear_session()
-    return result

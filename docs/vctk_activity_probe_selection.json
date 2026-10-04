@@ -1,0 +1,15 @@
+{
+  "prefix": "vctk_activity10",
+  "quadros": 10,
+  "pares": 17272,
+  "locutores": 108,
+  "minimo_por_locutor": 25,
+  "minimo_por_grupo_de_teste": 3,
+  "sha256_gravacoes": "2bb3393d25d339e7cec8692156009f2a6ad1d39935bf294994bb78fa01eb7368",
+  "metodo": "librosa.effects.split em 8 kHz, top_db=30, janela 256, salto 128; interseção dos microfones; margem de um quadro em cada fronteira",
+  "condicoes": [
+    "unfiltered",
+    "active",
+    "low"
+  ]
+}

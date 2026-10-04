@@ -4,15 +4,14 @@ Este subsistema decide **quem vai para onde**, e é portanto onde vazamentos de
 informação se originam. Três garantias são mantidas por construção e valem para
 todos os protocolos implementados aqui:
 
-1. **O conjunto de teste nunca influencia o treino.** A validação usada pelo
-   early-stopping é separada do treino, jamais do teste. Selecionar a melhor época
-   medindo no teste transforma a acurácia reportada no *pico* sobre o teste, que é
-   otimista e não estima desempenho em dados novos.
+1. **O conjunto de teste não ajusta pesos nem escolhe épocas.** A validação usada
+   pelo early-stopping é separada do treino, jamais do teste. Selecionar a melhor
+   época medindo no teste tornaria a acurácia reportada otimista.
 
-2. **O comprimento de padding vem apenas do treino.** Derivá-lo do conjunto
-   completo deixaria a duração dos enunciados de teste influenciar o formato da
-   entrada — uma via de vazamento sutil, e relevante quando as durações variam
-   muito entre enunciados.
+2. **O comprimento padrão vem apenas do treino.** No perfil de reexecução com
+   ``max_frames_cap=-1``, a largura é fixada pelo menor enunciado de todo o
+   corpus, inclusive os de teste. Isso usa metadados de duração do teste, não o
+   sinal nem o rótulo, e deve ser declarado ao interpretar os resultados.
 
 3. **Média e desvio da normalização vêm apenas do treino.** As estatísticas são
    então aplicadas inalteradas a validação e teste, como ocorreria em produção,
@@ -160,7 +159,9 @@ class FeatureAdjustmentSubsystem:
             for utterance in range(1, self.settings.num_utterances + 1):
                 file = path / str(speaker) / str(utterance) / MFCC_FILENAME
                 if file.exists():
-                    features[(speaker, utterance)] = np.load(file)
+                    matrix = np.load(file)
+                    if matrix.shape[1] >= self.settings.min_frames:
+                        features[(speaker, utterance)] = matrix
                 else:
                     missing += 1
 
@@ -207,13 +208,38 @@ class FeatureAdjustmentSubsystem:
     # Protocolo 1: validação cruzada dentro de um mesmo canal
     # ------------------------------------------------------------------
 
+    def fold_roles(self, available: list[int], fold: int,
+                   rng: np.random.Generator) -> dict[int, str]:
+        """Define papéis por gravação sem depender dos valores dos MFCCs.
+
+        Com deslocamento 1, grupos consecutivos fornecem teste e validação;
+        os outros grupos ficam no treino. Assim cada gravação passa uma vez
+        pelo teste e uma vez pela validação nas cinco partições.
+        """
+        if not 1 <= fold <= self.settings.num_folds:
+            raise ValueError('Partição fora do intervalo configurado.')
+        test_group = fold - 1
+        validation_group = (test_group + self.settings.validation_fold_offset) % self.settings.num_folds
+        roles = {}
+        for position, utterance in enumerate(available):
+            group = position % self.settings.num_folds
+            roles[utterance] = ('teste' if group == test_group else
+                                'validacao' if self.settings.validation_fold_offset and
+                                group == validation_group else 'treino')
+        if self.settings.validation_fold_offset == 0:
+            candidates = [u for u in available if roles[u] == 'treino']
+            if len(candidates) >= 2:
+                roles[int(rng.choice(candidates))] = 'validacao'
+        return roles
+
     def prepare_fold(self, fold: int) -> DataSplit:
         """Monta a partição ``fold`` da validação cruzada.
 
         Os enunciados de cada locutor são distribuídos em ``num_folds`` grupos pela
         sua posição ordenada. Na partição ``k``, o grupo ``k`` de cada locutor vai
-        para teste e o restante para treino, do qual se retira um enunciado por
-        locutor para validação.
+        para teste. Por padrão, uma gravação por locutor sai do restante para
+        validação. Com ``validation_fold_offset=1``, o grupo seguinte inteiro
+        vai para validação e os outros três grupos ficam no treino.
 
         Quando o número de enunciados iguala o número de partições, o esquema recai
         no *leave-one-utterance-out* clássico. No BrSD isso tem uma propriedade
@@ -241,18 +267,19 @@ class FeatureAdjustmentSubsystem:
                 u for u in range(1, self.settings.num_utterances + 1)
                 if (speaker, u) in features
             )
-            test_utterances = {
-                u for position, u in enumerate(available)
-                if position % self.settings.num_folds == (fold - 1)
-            }
-            candidates = [u for u in available if u not in test_utterances]
-            validation_utterance = int(rng.choice(candidates)) if len(candidates) >= 2 else None
+            # Na variante filtrada, preserve o papel que cada índice tinha no
+            # experimento completo. Renumerar só os sobreviventes trocaria
+            # treino/validação/teste entre os dois experimentos.
+            role_indices = (list(range(1, self.settings.num_utterances + 1))
+                            if self.settings.min_frames and self.settings.validation_fold_offset
+                            else available)
+            roles = self.fold_roles(role_indices, fold, rng)
 
             for utterance in available:
                 item = (features[(speaker, utterance)], label)
-                if utterance in test_utterances:
+                if roles[utterance] == 'teste':
                     test.append(item)
-                elif utterance == validation_utterance:
+                elif roles[utterance] == 'validacao':
                     validation.append(item)
                 else:
                     train.append(item)
@@ -535,8 +562,14 @@ class FeatureAdjustmentSubsystem:
         if self.settings.permute_labels:
             train, validation, test = self._permute_labels(train, validation, test)
 
-        # Garantia 2: o comprimento comum é o máximo do TREINO, nunca do conjunto todo.
-        num_frames = max(matrix.shape[1] for matrix, _ in train)
+        if self.settings.max_frames_cap == -1:
+            # Perfil de duração mínima: cada gravação do corpus participa da escolha.
+            # Assim todas as partições do mesmo corpus usam a mesma largura.
+            num_frames = min(matrix.shape[1] for group in (train, validation, test)
+                             for matrix, _ in group)
+        else:
+            # Perfil padrão: a largura vem apenas do treino.
+            num_frames = max(matrix.shape[1] for matrix, _ in train)
         if self.settings.max_frames_cap > 0:
             num_frames = min(num_frames, self.settings.max_frames_cap)
 

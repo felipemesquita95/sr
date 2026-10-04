@@ -3,7 +3,6 @@ import os
 os.environ.setdefault('KERAS_BACKEND', 'torch')
 os.environ.setdefault('QT_API', 'pyside6')
 
-import random
 import sys
 from pathlib import Path
 
@@ -12,18 +11,17 @@ for source in (ROOT, ROOT / 'src'):
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
 
-from PySide6.QtCore import QEvent, QSettings, QTimer, Qt
+from PySide6.QtCore import QSettings, QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (QApplication, QComboBox, QCompleter, QFrame, QHBoxLayout,
-    QLineEdit, QListWidget, QMainWindow, QMessageBox, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
+    QListWidget, QMainWindow, QStackedWidget, QVBoxLayout, QWidget)
 
 from ui import dados
 from ui.componentes import SampleSelector, button, label
-from ui.conteudo import STAGES, Selection, load_stage
+from ui.conteudo import ROTEIRO, SELECTION_STAGES, STAGES, Selection, load_stage
 from ui.estilo import STYLE
-from ui.experimentos import ResultsPage, TrainingPage
-from ui.evidencias import DefensePage, EvidencePage
-from ui.paginas import Page, TensorPage
+from ui.evidencias import EvidencePage
+from ui.passos import PassoPage
 from ui.tarefas import Tasks
 
 
@@ -80,17 +78,10 @@ class MainWindow(QMainWindow):
         self.navigation.currentRowChanged.connect(self.navigate)
         self.shortcuts = []
         for sequence, callback in [('Alt+Down', lambda: self.step_page(1)), ('Alt+Up', lambda: self.step_page(-1)),
-                                   ('Right', lambda: self.step_sample(1, keyboard=True)),
-                                   ('Left', lambda: self.step_sample(-1, keyboard=True)),
-                                   ('Alt+Right', lambda: self.step_sample(1)),
-                                   ('Alt+Left', lambda: self.step_sample(-1)),
                                    ('Ctrl+R', self.refresh_data), ('Ctrl+F', self.focus_speaker)]:
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.activated.connect(callback)
             self.shortcuts.append(shortcut)
-        for selector in (self.track, self.speaker, self.utterance):
-            selector.installEventFilter(self)
-            selector.lineEdit().installEventFilter(self)
         available = dados.tracks(dados.RUNS / 'features')
         self.track.blockSignals(True)
         for path in available:
@@ -125,17 +116,17 @@ class MainWindow(QMainWindow):
         side.addWidget(label('SR  /  STUDIO', 'brand'))
         side.addWidget(label('RECONHECIMENTO DE LOCUTOR', 'brandSub'))
         side.addSpacing(24)
-        side.addWidget(label('PIPELINE EXPERIMENTAL', 'navGroup'))
+        side.addWidget(label('PROCESSAMENTO', 'navGroup'))
         self.navigation = QListWidget()
         self.navigation.setObjectName('navigation')
         self.navigation.setSpacing(1)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        short_titles = {'defesa': 'Roteiro da defesa', 'filtragem': 'Filtragem e taxa', 'tensores': 'Tensores',
-                        'protocolos': 'Protocolos', 'assinatura': 'Assinatura', 'treino': 'Redes e treino'}
-        for i, (_, title, _) in enumerate(STAGES):
-            self.navigation.addItem(f'{i + 1:02d}   {short_titles.get(STAGES[i][0], title)}')
+        for i, (_, title, _) in enumerate(ROTEIRO):
+            self.navigation.addItem(f'{i + 1:02d}   {title}')
             self.navigation.item(i).setToolTip(title)
         side.addWidget(self.navigation, 1)
+        side.addWidget(button('Anterior · Alt + ↑', lambda: self.step_page(-1)))
+        side.addWidget(button('Próximo · Alt + ↓', lambda: self.step_page(1)))
         side.addWidget(self.counts)
         side.addSpacing(8)
         side.addWidget(label('LOCAL  ·  PYTHON + QT\nArtefatos do seu computador', 'brandSub'))
@@ -144,9 +135,9 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(main)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        toolbar = QFrame()
-        toolbar.setObjectName('selector')
-        top = QVBoxLayout(toolbar)
+        self.toolbar = QFrame()
+        self.toolbar.setObjectName('selector')
+        top = QVBoxLayout(self.toolbar)
         top.setContentsMargins(28, 18, 28, 14)
         line = QHBoxLayout()
         line.setSpacing(14)
@@ -162,14 +153,6 @@ class MainWindow(QMainWindow):
             field.addWidget(label(name, 'eyebrow'))
             field.addWidget(widget)
             line.addWidget(wrapper, stretch)
-        self.previous = button('←', lambda: self.step_sample(-1))
-        self.next = button('→', lambda: self.step_sample(1))
-        self.previous.setToolTip('Gravação anterior · volta ao locutor anterior no início · Alt + ←')
-        self.next.setToolTip('Próxima gravação · avança ao próximo locutor no fim · Alt + →')
-        self.complete = button('Amostra completa', self.random_complete, primary=True)
-        line.addWidget(self.previous, 0, Qt.AlignmentFlag.AlignBottom)
-        line.addWidget(self.next, 0, Qt.AlignmentFlag.AlignBottom)
-        line.addWidget(self.complete, 0, Qt.AlignmentFlag.AlignBottom)
         top.addLayout(line)
         trail = QHBoxLayout()
         self.breadcrumb = label('Selecione uma gravação para começar.', 'muted')
@@ -177,38 +160,45 @@ class MainWindow(QMainWindow):
         trail.addWidget(self.breadcrumb, 1)
         trail.addWidget(self.badge)
         top.addLayout(trail)
-        main_layout.addWidget(toolbar)
+        main_layout.addWidget(self.toolbar)
         self.stack = QStackedWidget()
         self.pages = []
+        self.page_by_stage = {}
+        self.passo_por_secao = {}
         for stage, title, description in STAGES:
-            if stage == 'defesa':
-                page = DefensePage(stage, title, description)
-                page.navigate_stage.connect(self.navigate_stage)
-            elif stage == 'evidencias':
-                page = EvidencePage(stage, title, description)
-            elif stage == 'tensores':
-                page = TensorPage(stage, title, description, self.profiles, self.tasks)
-            elif stage == 'treino':
-                page = self.training = TrainingPage(stage, title, description, self.profiles, self.tasks)
-            elif stage == 'resultados':
-                page = ResultsPage(stage, title, description, self.profiles, self.tasks)
-            else:
-                page = Page(stage, title, description)
+            page = PassoPage(stage, title, description, self.profiles, self.tasks)
             page.reload.connect(lambda p=page: self.reload_page(p))
             page.select_sample.connect(self.select_sample)
             self.pages.append(page)
+            self.page_by_stage[stage] = page
+            for nome, componente in page.componentes.items():
+                self.page_by_stage[nome] = componente
+                self.passo_por_secao[nome] = page
+                if hasattr(componente, 'navigate_stage'):
+                    componente.navigate_stage.connect(self.navigate_stage)
+                if isinstance(componente, EvidencePage):
+                    for evidencia in componente.stage_sections:
+                        self.page_by_stage[evidencia] = componente
+                        self.passo_por_secao[evidencia] = page
             self.stack.addWidget(page)
         main_layout.addWidget(self.stack, 1)
         layout.addWidget(main, 1)
 
     def navigate_stage(self, stage, section=''):
         """Abre uma etapa e sua evidência, usado no roteiro da defesa."""
-        index = next((i for i, item in enumerate(STAGES) if item[0] == stage), None)
-        if index is not None:
-            self.navigation.setCurrentRow(index)
-            page = self.pages[index]
-            if section and isinstance(page, EvidencePage):
-                page.sections.setCurrentIndex(page.section_names.index(section))
+        componente = self.page_by_stage.get(stage)
+        if componente is None:
+            return
+        page = self.passo_por_secao.get(stage, componente)
+        if componente is not page:
+            page.sections.setCurrentWidget(componente)
+        if isinstance(componente, EvidencePage):
+            destino = section or componente.stage_sections.get(stage)
+            if destino in componente.section_names:
+                componente.sections.setCurrentIndex(componente.section_names.index(destino))
+        self.navigation.setCurrentRow(self.pages.index(page))
+        self.update_toolbar(page)
+        self.refresh_page()
 
     def track_changed(self):
         path = self.track.currentData()
@@ -219,7 +209,7 @@ class MainWindow(QMainWindow):
         self.selection = None
         self.revision += 1
         self.inventory = {}
-        for widget in (self.speaker, self.utterance, self.complete, self.previous, self.next):
+        for widget in (self.speaker, self.utterance):
             widget.setEnabled(False)
         self.profile, self.settings = dados.track_profile(path, self.profiles)
         self.breadcrumb.setText(f'{path.name} · lendo índice…')
@@ -253,7 +243,6 @@ class MainWindow(QMainWindow):
             self.speaker.blockSignals(False)
             self.speaker.setEnabled(True)
             self.utterance.setEnabled(True)
-            self.complete.setEnabled(any(any(v.values()) for v in self.inventory.values()))
             count = sum(map(len, self.inventory.values()))
             self.counts.setText(f'{len(self.inventory)} locutores\n{count:,} gravações'.replace(',', '.'))
             self.speaker_changed()
@@ -268,8 +257,8 @@ class MainWindow(QMainWindow):
             old = self.preferences.value('utterance', 1, type=int)
         # Ao trocar o locutor nas etapas visuais, não herdar um enunciado sem
         # sinal quando há outro exemplo disponível desse mesmo locutor.
-        stage = self.pages[self.stack.currentIndex()].stage
-        if stage in ('sinal', 'vad', 'filtragem', 'preenfase'):
+        stage = self.pages[self.stack.currentIndex()].sections.currentWidget().stage
+        if stage in ('sinal', 'preprocessamento'):
             available = [u for u, complete in self.inventory[speaker].items() if complete]
             has_audio = (stage == 'sinal' and old is not None and dados.audio_source(
                 self.settings, speaker, old, self.manifest, self.track.currentData().name))
@@ -290,27 +279,29 @@ class MainWindow(QMainWindow):
         self.selection = Selection(self.track.currentData(), speaker, utterance, self.inventory,
                                    self.manifest, self.names, self.profile, self.settings)
         self.revision += 1
-        self.previous.setEnabled(self.utterance.currentIndex() > 0 or self.speaker.currentIndex() > 0)
-        self.next.setEnabled(self.utterance.currentIndex() < self.utterance.count() - 1
-                             or self.speaker.currentIndex() < self.speaker.count() - 1)
         name = self.names.get(speaker, f'Locutor {speaker}')
         self.breadcrumb.setText(f'{self.track.currentText()}   /   {name}   /   enunciado {utterance:03d}')
         complete = self.inventory[speaker][utterance]
         self.badge.setText('FIGURAS DISPONÍVEIS' if complete else 'MFCC DISPONÍVEL')
-        self.training.set_context(self.selection)
         page = self.pages[self.stack.currentIndex()]
-        if page.stage != 'treino':
-            page.loading('Carregando a gravação selecionada…')
+        page.loading('Carregando a gravação selecionada…')
         self.debounce.start()
 
     def navigate(self, index):
         if index < 0:
             return
         self.stack.setCurrentIndex(index)
+        self.update_toolbar(self.pages[index])
         self.refresh_page()
+
+    def update_toolbar(self, page):
+        """Mostra a seleção apenas quando ela controla a página aberta."""
+        self.toolbar.setVisible(page.stage in SELECTION_STAGES)
 
     def reload_page(self, page):
         page.loaded_key = None
+        for componente in page.componentes.values():
+            componente.loaded_key = None
         self.requested.pop(page.stage, None)
         if page is self.pages[self.stack.currentIndex()]:
             self.refresh_page()
@@ -319,16 +310,9 @@ class MainWindow(QMainWindow):
         if not self.selection:
             return
         page = self.pages[self.stack.currentIndex()]
-        if page.stage == 'treino':
-            page.ready()
-            return
         ctx = self.selection
-        settings, fold = None, 1
-        parameters = ()
-        if isinstance(page, TensorPage):
-            settings = self.profiles.get(page.profile.currentData())
-            fold = page.fold.value()
-            parameters = str(page.profile.currentData()), fold
+        fold = page.preparar(ctx)
+        parameters = (fold,)
         key = ctx.key, self.revision, parameters
         if page.loaded_key == key:
             page.ready()
@@ -356,46 +340,17 @@ class MainWindow(QMainWindow):
                 page.pending_payload = key, data, ctx
             else:
                 self.show_result(page, key, data, ctx)
-        self.tasks.submit(lambda: load_stage(page.stage, ctx, settings, fold), finish)
+        self.tasks.submit(lambda: load_stage(page.stage, ctx, ctx.settings, fold), finish)
 
     def show_result(self, page, key, data, ctx):
         try:
             page.display(data, ctx)
             page.loaded_key = key
-            self.statusBar().showMessage('Pronto   ·   ← → enunciados   ·   Alt + ↑ ↓ etapas   ·   Ctrl + F buscar locutor')
+            for componente in page.componentes.values():
+                componente.loaded_key = key
+            self.statusBar().showMessage('Pronto   ·   Alt + ↑ ↓ roteiro   ·   Ctrl + F buscar locutor')
         except Exception as error:
             page.error(str(error))
-
-    def step_sample(self, direction, keyboard=False):
-        if keyboard:
-            focus = QApplication.focusWidget()
-            selector_fields = [s.lineEdit() for s in (self.track, self.speaker, self.utterance)]
-            if isinstance(focus, QSpinBox) or (isinstance(focus, QLineEdit) and
-                    (focus not in selector_fields or focus.isModified())):
-                return
-        index = self.utterance.currentIndex() + direction
-        if self.utterance.isEnabled() and 0 <= index < self.utterance.count():
-            self.utterance.setCurrentIndex(index)
-        elif self.utterance.isEnabled():
-            speaker_index = self.speaker.currentIndex() + direction
-            if 0 <= speaker_index < self.speaker.count():
-                speaker = self.speaker.itemData(speaker_index)
-                utterances = list(self.inventory[speaker])
-                self.select_sample(speaker, utterances[0 if direction > 0 else -1])
-
-    def eventFilter(self, watched, event):
-        # Durante uma busca, as setas editam o texto; após escolher, navegam.
-        if (event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
-                and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)
-                and event.modifiers() == Qt.KeyboardModifier.NoModifier):
-            if event.type() == QEvent.Type.ShortcutOverride:
-                event.accept()
-                return True
-            field = watched.lineEdit() if isinstance(watched, QComboBox) else watched
-            if isinstance(field, QLineEdit) and not field.isModified():
-                self.step_sample(1 if event.key() == Qt.Key.Key_Right else -1)
-                return True
-        return super().eventFilter(watched, event)
 
     def select_sample(self, speaker, utterance):
         self.speaker.setCurrentIndex(self.speaker.findData(speaker))
@@ -408,13 +363,6 @@ class MainWindow(QMainWindow):
         self.speaker.setFocus()
         self.speaker.lineEdit().selectAll()
 
-    def random_complete(self):
-        choices = [(s, u) for s, values in self.inventory.items() for u, yes in values.items()
-                   if yes and (not self.selection or (s, u) != (self.selection.speaker, self.selection.utterance))]
-        if choices:
-            speaker, utterance = random.choice(choices)
-            self.select_sample(speaker, utterance)
-
     def refresh_data(self):
         dados.clear_cache()
         for page in self.pages:
@@ -422,27 +370,12 @@ class MainWindow(QMainWindow):
         self.track_changed()
 
     def closeEvent(self, event):
-        job = self.training.manager.job
-        if job and job.process.poll() is None:
-            if not job.stopping:
-                answer = QMessageBox.question(self, 'Treino em andamento',
-                    'Interromper o treino antes de fechar o aplicativo?',
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-                if answer != QMessageBox.StandardButton.Yes:
-                    event.ignore()
-                    return
-                job.stop()
-            event.ignore()
-            self.statusBar().showMessage('Aguardando o encerramento do treino…')
-            QTimer.singleShot(250, self.close)
-            return
         if self.preferences:
             self.preferences.setValue('geometry', self.saveGeometry())
             self.preferences.setValue('track', self.track.currentText())
             if self.selection:
                 self.preferences.setValue('speaker', self.selection.speaker)
                 self.preferences.setValue('utterance', self.selection.utterance)
-        self.training.timer.stop()
         self.tasks.close()
         event.accept()
 

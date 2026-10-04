@@ -1,0 +1,139 @@
+{
+  "example": "p225_013",
+  "cohort_index_100": 3,
+  "source_files": {
+    "mic1": "/media/lsmsqt/HDD/datasets/vctk/VCTK-Corpus-0.92/wav48_silence_trimmed/p225/p225_013_mic1.flac",
+    "mic2": "/media/lsmsqt/HDD/datasets/vctk/VCTK-Corpus-0.92/wav48_silence_trimmed/p225/p225_013_mic2.flac"
+  },
+  "audio_samples_16k": 75500,
+  "silero_segments": {
+    "mic1": {
+      "group": "VCTK mic1",
+      "speaker": "p225",
+      "utterance": "013",
+      "path": "/media/lsmsqt/HDD/datasets/vctk/VCTK-Corpus-0.92/wav48_silence_trimmed/p225/p225_013_mic1.flac",
+      "source_rate": 48000,
+      "source_channels": 1,
+      "source_samples": 226498,
+      "samples_16k": 75500,
+      "duration_seconds": 4.71875,
+      "elapsed_seconds": 0.29432748399995035,
+      "origin": "new VAD200 inference",
+      "activity_frames": 220,
+      "activity_seconds": 3.548,
+      "activity_segments": 1,
+      "activity_longest_segment_frames": 220,
+      "activity_segments_with_frames": 1,
+      "activity_segments_samples": [
+        [
+          14880,
+          71648
+        ]
+      ],
+      "non_activity_frames": 71,
+      "non_activity_seconds": 1.17075,
+      "non_activity_segments": 2,
+      "non_activity_longest_segment_frames": 57,
+      "non_activity_segments_with_frames": 2,
+      "non_activity_segments_samples": [
+        [
+          0,
+          14880
+        ],
+        [
+          71648,
+          75500
+        ]
+      ]
+    },
+    "mic2": {
+      "group": "VCTK mic2",
+      "speaker": "p225",
+      "utterance": "013",
+      "path": "/media/lsmsqt/HDD/datasets/vctk/VCTK-Corpus-0.92/wav48_silence_trimmed/p225/p225_013_mic2.flac",
+      "source_rate": 48000,
+      "source_channels": 1,
+      "source_samples": 226498,
+      "samples_16k": 75500,
+      "duration_seconds": 4.71875,
+      "elapsed_seconds": 0.2079154480015859,
+      "origin": "new VAD200 inference",
+      "activity_frames": 218,
+      "activity_seconds": 3.516,
+      "activity_segments": 1,
+      "activity_longest_segment_frames": 218,
+      "activity_segments_with_frames": 1,
+      "activity_segments_samples": [
+        [
+          15392,
+          71648
+        ]
+      ],
+      "non_activity_frames": 73,
+      "non_activity_seconds": 1.20275,
+      "non_activity_segments": 2,
+      "non_activity_longest_segment_frames": 59,
+      "non_activity_segments_with_frames": 2,
+      "non_activity_segments_samples": [
+        [
+          0,
+          15392
+        ],
+        [
+          71648,
+          75500
+        ]
+      ]
+    }
+  },
+  "windows": {
+    "40": {
+      "activity": {
+        "segment_start": 15392,
+        "segment_end": 71648,
+        "window_start": 38176,
+        "window_end": 48672,
+        "first_frame": 89,
+        "frames": 40
+      },
+      "non_activity": {
+        "segment_start": 0,
+        "segment_end": 14880,
+        "window_start": 2048,
+        "window_end": 12544,
+        "first_frame": 8,
+        "frames": 40
+      }
+    },
+    "80": {
+      "activity": {
+        "segment_start": 15392,
+        "segment_end": 71648,
+        "window_start": 33056,
+        "window_end": 53792,
+        "first_frame": 69,
+        "frames": 80
+      }
+    },
+    "100": {
+      "activity": {
+        "segment_start": 15392,
+        "segment_end": 71648,
+        "window_start": 30496,
+        "window_end": 56352,
+        "first_frame": 59,
+        "frames": 100
+      }
+    }
+  },
+  "figures": [
+    "01_audio_cadeia.png",
+    "01b_espectro.png",
+    "02_vad_janelas.png",
+    "03_mel_mfcc_deltas.png",
+    "04_pontos_normalizacao.png",
+    "05_normalizacoes_exemplo.png",
+    "06_atividade_resultados.png",
+    "07_normalizacoes_cross_100.png"
+  ]
+}

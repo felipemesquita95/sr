@@ -7,3 +7,6 @@
 
 pytest>=8.0
 PySide6-Essentials>=6.8,<7
+Markdown>=3.8
+gdown>=6.4
+reportlab>=5.0

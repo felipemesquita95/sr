@@ -1,0 +1,151 @@
+Trabalhe em `/home/lsmsqt/Documents/sr`.
+
+# Estado atual
+
+`HEAD` é `7e493ad` e já está publicado em `origin/master`. A árvore de trabalho
+tem mudanças **não commitadas** de um episódio anterior, que reorganizou a UI em
+um "roteiro da defesa" (`prompts/2026-09-09-ui-roteiro.prompt.txt` descreve o que
+foi pedido lá). Esse trabalho parcial é o seu ponto de partida — não o descarte.
+
+Dois testes falham hoje, e **os dois são para você consertar**:
+
+1. `tests/test_ui.py::test_result_partition_wheel_keeps_curves_and_sections_keep_scroll`
+   Ao adaptar a navegação, o teste passou a usar `window.navigation.setCurrentRow(0)`,
+   mas a linha 0 agora é `corpus`, não a página de resultados. A página nunca fica
+   visível, `loaded_key` continua `None` e o `wait_until` estoura. Navegue até o
+   estágio certo.
+2. `tests/test_ui.py::test_barra_de_selecao_so_aparece_no_material_de_apoio`
+   Contradição real: `ui/conteudo.py` inclui `'corpus'` em `SELECTION_STAGES`, o
+   teste afirma que não deveria. A reorganização pedida abaixo torna essa
+   contradição discutível; resolva-a de acordo com a regra nova (abaixo) e ajuste
+   o que sobrar.
+
+Rode sempre:
+`KERAS_BACKEND=torch QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest`
+São **161 testes coletados**, 159 passando e 2 falhando. Ao terminar, todos devem
+passar.
+
+# O que o autor quer
+
+Ele vai defender o TCC apresentando esta interface. O pedido, nas palavras dele:
+que a UI seja **uma apresentação do processamento, em ordem sequencial, fiel ao
+que realmente acontece** — o áudio entra, vira MFCC, entra na rede, sai resultado.
+Com os **parâmetros reais de cada amostra** visíveis em cada etapa, e a
+possibilidade de **escolher a amostra** e de **comparar experimentos**.
+
+A interface tem hoje **16 páginas**. É demais, e ele já disse que "tem muita coisa
+inútil, e o que é útil não está fluido pra usar".
+
+## A causa concreta do inchaço
+
+`EvidencePage` (`ui/evidencias.py:69`) é **uma classe com 7 seções internas**, mas
+`ui/app.py:170` a instancia **7 vezes** — uma por estágio de evidência
+(`matrizes`, `canal`, `protocolos`, `erros`, `sessao`, `controles`, `brsd`), cada
+cópia apenas abrindo numa aba diferente das *mesmas* 7 abas. São 7 itens da
+lateral apontando para a mesma tela, e cada cópia recarrega o mesmo payload
+(`dados.diagnosticos()` mais os documentos). Colapse isso para **uma** instância.
+
+# A reorganização: quatro passos
+
+A lateral passa a ter **quatro** itens, nesta ordem, com anterior/próximo
+(`Alt + ↑/↓`) entre eles:
+
+| passo | absorve as páginas atuais | barra de seleção |
+|---|---|---|
+| **1. Sinal** | `corpus`, `sinal`, `preprocessamento` | sim |
+| **2. MFCC** | `mfcc`, `assinatura` | sim |
+| **3. Rede** | `modelo`, `tensores` | sim |
+| **4. Resultado** | `resultados`, as 7 evidências, `limites` | não |
+
+Cada passo é uma página seccionada (use a `SectionedPage` que já existe) com
+rolagens independentes, como as páginas atuais já fazem. A regra da barra de
+seleção passa a ser simples e sem exceção: **ela aparece nos passos 1 a 3 e não
+aparece no passo 4.** O corpus está dentro do passo 1 justamente porque descreve a
+trilha escolhida no topo.
+
+## Passo 1 — Sinal
+
+A gravação escolhida, em ordem: o corpus de onde ela vem, a forma de onda e o
+espectro originais, e então o pré-processamento (VAD, filtragem, reamostragem,
+pré-ênfase) na mesma tela.
+
+## Passo 2 — MFCC
+
+A representação que a rede recebe: a matriz MFCC da gravação, o par entre trilhas
+quando existir, e a assinatura de canal.
+
+**Delta e delta-delta não existem em disco.** `src/sr/preprocessing/pipeline.py`
+tem `compute_deltas: bool = False` e nenhum `delta.npy` ou `delta_delta.npy` foi
+gravado em `runs/features/` — verifiquei, são zero arquivos. **Não os calcule na
+interface e não os invente.** Declare a ausência com o caminho esperado
+(`delta.npy`, `delta_delta.npy` ao lado de `mfccs.npy`) e diga que o perfil que
+gerou estas features não os persistiu. Se e quando existirem, a tela deve
+exibi-los sem mudança de código.
+
+## Passo 3 — Rede
+
+As arquiteturas que recebem os MFCCs, com a contagem real de parâmetros, e a
+montagem dos tensores: a divisão real por partição e as garantias contra
+vazamento.
+
+## Passo 4 — Resultado
+
+Reúne o resultado principal, as evidências diagnósticas (as 7 seções da
+`EvidencePage`, agora em uma instância só) e as ressalvas de `limites`.
+
+Inclua aqui a **comparação de experimentos**, que é pedido explícito do autor e
+hoje não existe direito. O substrato já está pronto: `dados.metrics()`
+(`ui/dados.py:300`) devolve uma linha por `experimento × arquitetura × partição`,
+com `acuracia`, `f1_macro`, `acaso`, `num_classes`, `num_amostras_teste` e o
+`diretorio` de procedência. Há **21 experimentos** em `runs/models/`. Ofereça uma
+tabela ordenável e filtrável, com seleção de duas ou mais linhas para contraste
+lado a lado. Cada valor exibido carrega o diretório de onde saiu.
+
+# Parâmetros reais de cada amostra
+
+Pedido explícito: "dados dos parâmetros de cada amostra, parâmetros reais". Em
+cada passo, mostre os parâmetros que **de fato** governaram aquela etapa, lidos do
+perfil da trilha (`ui/dados.py:275`, `track_profile`) e do manifesto — nunca
+escritos no código. Os campos relevantes estão em `src/sr/config/settings.py`:
+`source_sampling_rate`, `target_sampling_rate`, `enable_vad`, `vad_top_db`,
+`pre_emphasis_coef`, `num_mfccs`, `frame_size`, `num_folds`, `num_speakers`,
+`num_utterances`, `batch_size`, `learning_rate`, `early_stopping_patience`.
+Mostre-os na etapa onde agem: as taxas e o VAD no passo 1, `num_mfccs` e
+`frame_size` no passo 2, o protocolo e o treino no passo 3.
+
+Quando a trilha não tiver perfil associado, diga isso — não escolha um perfil
+padrão silenciosamente.
+
+# Preserve
+
+Busca de locutor (`Ctrl + F`), validação da entrada digitada com restauração da
+seleção anterior, memória de geometria e seleção via `QSettings`, `Ctrl + R` para
+invalidar caches, o carregamento em segundo plano e o descarte de respostas
+obsoletas quando a seleção muda durante uma tarefa.
+
+Não reintroduza: treino pela interface, sorteio de amostra aleatória, navegação
+por setas entre gravações. Foram removidos de propósito no episódio anterior.
+
+# Restrições
+
+- Português no código, comentários, docstrings e documentação. Docstrings no
+  estilo Google.
+- **Nenhum número escrito no código.** Todo valor exibido vem de artefato lido em
+  tempo de execução; ausência vira aviso com o caminho esperado, nunca valor de
+  reserva nem número copiado da documentação.
+- Não altere `src/sr/`, `experiments/` nem os artefatos em `runs/`.
+- Acrescente teste para as propriedades novas: que a lateral tem exatamente quatro
+  passos; que a barra de seleção aparece nos passos 1 a 3 e não no 4; que cada
+  seção das evidências continua alcançável a partir do passo 4; que a comparação
+  de experimentos lê de `dados.metrics()` e exibe a procedência.
+- Atualize `ui/README.md` e `docs/ui.md`.
+- **Não faça commits.** Deixe tudo na árvore de trabalho.
+
+# Relato final
+
+Em português: quantas páginas saíram e quantas linhas isso liberou; como ficaram
+os quatro passos e o que entrou em cada um; como a comparação de experimentos
+funciona e de onde lê; o que você fez com delta e delta-delta; quantos testes
+passam ao final e quais você acrescentou; e onde você decidiu algo que este prompt
+não especificava. Se algo bloquear, diga e pare — não invente número nem desative
+teste para fechar a tarefa.

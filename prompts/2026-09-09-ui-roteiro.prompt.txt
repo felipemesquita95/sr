@@ -1,0 +1,82 @@
+Trabalhe em `/home/lsmsqt/Documents/sr`. Árvore limpa no commit `7e493ad`, que
+acabou de acrescentar as páginas de evidência (`ui/evidencias.py`, páginas
+`defesa` e `evidencias` em `ui/conteudo.py`). **171 testes passam.**
+
+# Diagnóstico do autor
+
+Ele vai defender o TCC apresentando esta interface, e disse: "tem muita coisa
+inútil lá, e o que é útil não está fluido pra usar". Concordo, e o problema tem
+causa identificável:
+
+1. A barra TRILHA / LOCUTOR / ENUNCIADO é **global** (`ui/app.py`, no layout
+   acima do `QStackedWidget`). Aparece nas 13 páginas mas só significa alguma
+   coisa em ~6. Em Protocolos, Resultados, Roteiro e Evidências o usuário
+   escolhe um locutor e um enunciado que não mudam nada na tela.
+2. A lista lateral é plana e agora tem 13 itens numerados em sequência. As
+   páginas novas foram anexadas **depois** do pipeline, então o argumento da
+   defesa está no fim de uma lista de etapas de processamento de sinal.
+
+# O que remover
+
+- **Treinar pela interface.** Remova a `TrainingPage` de `ui/experimentos.py` e
+  a máquina de subprocesso (`ui/execucao.py`), com o que mais ficar órfão. Numa
+  defesa isso só oferece risco: um clique errado dispara um treino ou sobrescreve
+  artefato na frente da banca. Os resultados já estão todos em disco. **Preserve**
+  a leitura de resultados persistidos (`ResultsPage`) — some a capacidade de
+  *executar*, não a de *ler*.
+- **"Amostra completa"** (o sorteio aleatório) e a **navegação por setas** entre
+  gravações, incluindo `Alt + ←/→` e a travessia para o locutor seguinte. Numa
+  apresentação o autor quer um exemplo específico e ensaiado, não um sorteio.
+- **Fundir** as etapas `vad`, `filtragem` e `preenfase` numa única página de
+  pré-processamento, em vez de três que exigem escolher locutor e enunciado em
+  cada uma.
+
+# O que preservar
+
+Busca de locutor (`Ctrl + F`), validação da entrada digitada com restauração da
+seleção anterior, e a memória de geometria e seleção via `QSettings`. Também o
+carregamento em segundo plano e o descarte de respostas obsoletas.
+
+# A reorganização
+
+**A navegação passa a ser o roteiro da defesa.** A ordem da lista lateral é a
+ordem em que o argumento deve ser contado, com anterior/próximo entre os passos
+do roteiro. Derive essa ordem de `docs/resultados.md` — ela já está lá, nas
+seções 1 a 9. Não invente uma narrativa nova.
+
+O pipeline **deixa de ser um ramo próprio** e vira material de apoio, alcançável
+por dentro das evidências que dependem dele. Exemplo do vínculo pretendido: da
+evidência do diagnóstico de canal se chega à página de assinatura e à de MFCC,
+porque são elas que explicam de onde vem aquela representação. Quem estiver
+apresentando deve poder descer ao "como foi feito" e voltar ao argumento sem se
+perder.
+
+A barra de seleção só aparece onde a seleção governa o que está na tela.
+
+# Restrições
+
+- Português no código, comentários, docstrings e documentação. Docstrings no
+  estilo Google.
+- **Nenhum número escrito no código.** Continua valendo: todo valor exibido vem
+  de artefato lido em tempo de execução; ausência vira aviso com o caminho
+  esperado, nunca valor de reserva nem número copiado da documentação.
+- Não altere `src/sr/`, `experiments/` nem os artefatos em `runs/`.
+- Rode `KERAS_BACKEND=torch QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest`.
+  São 171 testes hoje. Remover a página de treino vai invalidar os testes que a
+  cobrem: **remova esses testes junto com o recurso**, não os desative nem os
+  esvazie. Diga no relato quantos saíram por isso. Os demais devem continuar
+  passando.
+- Acrescente teste para as propriedades novas: que a barra de seleção não é
+  exibida nas páginas onde a seleção não governa nada, e que o roteiro alcança
+  cada evidência.
+- Atualize `ui/README.md`, inclusive removendo a seção de treinamento.
+- **Não faça commits** — o sandbox monta `.git` como somente leitura. Deixe na
+  árvore de trabalho.
+
+# Relato final
+
+Em português: o que removeu e quantas linhas isso liberou, como ficou a ordem do
+roteiro e por que, o que virou material de apoio e como se chega nele, quantos
+testes passam e quantos foram removidos junto com o recurso, e onde você decidiu
+algo que este prompt não especificava. Se algo bloquear, diga e pare — não
+invente número nem desative teste para fechar a tarefa.

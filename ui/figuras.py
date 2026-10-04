@@ -258,7 +258,8 @@ def distribuicoes(series, title, ylabel='Acurácia (%)'):
     scale = np.asarray([item for group in values for item in group])
     factor = 100 if np.nanmax(np.abs(scale)) <= 1 else 1
     positions = np.arange(len(values))
-    ax.boxplot([value * factor for value in values], positions=positions, labels=labels, showmeans=False)
+    ax.boxplot([value * factor for value in values], positions=positions, showmeans=False)
+    ax.set_xticks(positions, labels)
     for position, value in zip(positions, values):
         ax.scatter(np.full(len(value), position), value * factor, alpha=.45, color='#168f83', s=12)
     ax.set(ylabel=ylabel)

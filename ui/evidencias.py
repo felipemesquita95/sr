@@ -1,4 +1,5 @@
 """Páginas de evidência para a defesa, compostas apenas de artefatos locais."""
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -55,49 +56,83 @@ def secao_contem(documento, texto):
     return '\n'.join(lines[start:end]).strip()
 
 
+def texto_legivel(markdown):
+    """Retira a marcação do trecho documental sem interpretá-lo como HTML.
+
+    Os rótulos exibem artefatos em texto simples de propósito, então converter
+    para HTML abriria a porta para o documento controlar a apresentação. Aqui a
+    sintaxe apenas some: o leitor vê a frase, não os asteriscos.
+
+    Args:
+        markdown: Trecho extraído da documentação.
+
+    Returns:
+        Par de título e corpo já sem marcação.
+    """
+    # A ênfase costuma atravessar a quebra de linha no documento, então a
+    # remoção acontece no texto inteiro antes de separá-lo em linhas.
+    texto = re.sub(r'\*\*(.+?)\*\*', r'\1', markdown, flags=re.DOTALL)
+    texto = re.sub(r'`(.+?)`', r'\1', texto, flags=re.DOTALL)
+    linhas = [re.sub(r'^\s*-\s+', '• ', linha) for linha in texto.splitlines()
+              if linha.strip() not in ('---', '***', '___')]
+    titulo, corpo = '', linhas
+    if linhas and linhas[0].lstrip().startswith('#'):
+        titulo = linhas[0].lstrip('# ').strip()
+        corpo = linhas[1:]
+    return titulo, '\n'.join(corpo).strip('\n')
+
+
 class DefensePage(Page):
-    """Abre a defesa pelo encadeamento argumentativo do documento."""
+    """Apresenta a delimitação final do argumento da defesa."""
     navigate_stage = Signal(str, str)
 
     def display(self, data, ctx):
         """Monta o roteiro e direciona cada passo à evidência navegável."""
         self.reset_body()
-        roteiro = [
-            ('Resultado convencional', 'Resultados persistidos e matriz pareada.', 'Matrizes'),
-            ('O silêncio prediz', 'Diagnóstico de travessia por recorte do sinal.', 'Silêncio e travessia'),
-            ('Troca de microfone', 'Matriz de transferência e protocolos auxiliares.', 'Protocolos auxiliares'),
-            ('Não é só transdutor', 'Recuperação após transformação afim.', 'Sessão ou transdutor'),
-            ('Não era o teto', 'Referência estática contra as sementes da CNN.', 'Matrizes'),
-        ]
-        self.notice('Roteiro da defesa, na ordem de docs/resultados.md. Cada botão abre a evidência; números só aparecem após a leitura dos arquivos em runs/.')
-        for titulo, explicacao, secao in roteiro:
-            widget, layout = card(titulo, explicacao)
-            layout.addWidget(button('Abrir evidência', lambda target=secao: self.navigate_stage.emit('evidencias', target), primary=True))
-            self.content.addWidget(widget)
-        self.notice(ressalva(data['resultados'], '## 9. O que este documento **não** afirma'), True)
+        titulo, corpo = texto_legivel(ressalva(data['resultados'],
+                                               '## 9. O que este documento **não** afirma'))
+        widget, layout = card(titulo or 'Ressalvas', '')
+        layout.addWidget(label(corpo, 'notice'))
+        self.content.addWidget(widget)
+        self.content.addStretch()
         self.ready()
 
 
 class EvidencePage(SectionedPage):
     """Agrupa relatórios diagnósticos em abas para consulta durante a defesa."""
+    navigate_stage = Signal(str, str)
     section_names = ('Matrizes', 'Silêncio e travessia', 'Sessão ou transdutor',
                      'Estrutura dos erros', 'Controles', 'Protocolos auxiliares', 'BrSD')
+    stage_sections = {'matrizes': 'Matrizes', 'canal': 'Silêncio e travessia',
+                      'sessao': 'Sessão ou transdutor', 'erros': 'Estrutura dos erros',
+                      'controles': 'Controles', 'protocolos': 'Protocolos auxiliares',
+                      'brsd': 'BrSD'}
 
     def _proveniencia(self, path, report):
+        """Registra a origem do relatório sem afogar a medida que ele sustenta.
+
+        Nomeia os arquivos de configuração em vez de enumerar suas chaves, e
+        mostra o comando de reprodução uma única vez por carga: repeti-lo a cada
+        um dos seis relatórios empurrava o gráfico para fora da tela.
+
+        Args:
+            path: Caminho do relatório exibido.
+            report: Conteúdo já lido, mantido para as chamadas que o inspecionam.
+        """
         self.content.addWidget(label(f'Procedência: {path}', 'muted'))
         parent = path.parent
         metadata = []
         for name in ('configuracao.json', 'divisao.json'):
             candidate = next((p / name for p in (parent, *parent.parents) if (p / name).is_file()), None)
             if candidate:
-                value = dados.read_json(candidate)
-                metadata.append(f'{candidate}: {", ".join(value.keys())}')
+                metadata.append(str(candidate))
         if metadata:
-            self.notice('Como foi feito (metadados persistidos): ' + ' · '.join(metadata))
+            self.content.addWidget(label('Como foi feito (metadados persistidos): ' + ' · '.join(metadata), 'muted'))
         else:
             self.notice('Como foi feito: configuração/divisão não persistidas junto deste relatório; o comando exato não pode ser inferido sem inventá-lo. Gere novamente o experimento para registrar configuracao.json e divisao.json.', True)
-        if self.reproducao:
+        if self.reproducao and not self.reproducao_exibida:
             self.notice('Comando de reprodução documentado:\n' + self.reproducao)
+            self.reproducao_exibida = True
 
     def _missing(self, paths):
         for path in paths:
@@ -110,18 +145,23 @@ class EvidencePage(SectionedPage):
         resultados = data['resultados']
         limitacoes = data['limitacoes']
         self.reproducao = secao_contem(resultados, 'Reprodução')
+        self.reproducao_exibida = False
 
         self.use_section(0)
         self.notice('Pergunta: quanto a identificação muda entre a trilha de treino e a outra trilha?')
-        matrix_series = []
+        matrix_series, matrix_sources = [], []
         for path, report in data['diagnosticos']['matrizes']:
             ajustes = report.get('ajustes', [])
             perdas = [a['perda_acuracia_pp'] for a in ajustes if 'perda_acuracia_pp' in a]
             if perdas:
                 matrix_series.append((path.parent.name, perdas))
-                self._proveniencia(path, report)
+                matrix_sources.append((path, report))
+        # Numa defesa a medida vem primeiro; a procedência fica logo abaixo dela,
+        # e não empurrando o gráfico para fora da tela.
         if matrix_series:
             self.content.addWidget(figuras.distribuicoes(matrix_series, 'Perda pareada por ajuste', 'Perda (pp)'))
+            for path, report in matrix_sources:
+                self._proveniencia(path, report)
         else:
             self.notice('Nenhuma matriz de transferência legível.', True)
         self.notice(ressalva(resultados, '## 5.2 A média não descreve nenhum locutor'), True)
@@ -136,6 +176,10 @@ class EvidencePage(SectionedPage):
 
         self.use_section(1)
         self.notice('Pergunta: o que silêncio, fala e sinal completo predizem dentro e através da trilha?')
+        self.content.addWidget(button('Ver assinatura de canal e MFCCs',
+                                      lambda: self.navigate_stage.emit('assinatura', ''), primary=True))
+        self.content.addWidget(button('Ver MFCCs da gravação selecionada',
+                                      lambda: self.navigate_stage.emit('mfcc', '')))
         if 'travessia' in reports:
             path, report = reports['travessia']
             rows = [(f'{condition} · dentro', value['dentro']) for condition, value in report.get('condicoes', {}).items()]
@@ -223,5 +267,8 @@ class EvidencePage(SectionedPage):
         for index in range(len(self.areas)):
             self.use_section(index)
             self._missing(data['diagnosticos']['ausentes'])
+        target = self.stage_sections.get(self.stage)
+        if target:
+            self.sections.setCurrentIndex(self.section_names.index(target))
         self.use_section(self.sections.currentIndex())
         self.ready()

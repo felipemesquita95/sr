@@ -1,0 +1,129 @@
+{
+  "pares": 21523,
+  "limiar_vad_db": 30,
+  "descricao": "VAD em cada FLAC completo; classificação no centro do quadro MFCC.",
+  "quadros_mfcc": {
+    "min": 77,
+    "q1": 166.0,
+    "mediana": 203.0,
+    "q3": 254.0,
+    "max": 1035,
+    "sem_quadros": 0
+  },
+  "voz_mic1": {
+    "min": 30,
+    "q1": 106.0,
+    "mediana": 141.0,
+    "q3": 187.0,
+    "max": 826,
+    "sem_quadros": 0
+  },
+  "baixa_mic1": {
+    "min": 0,
+    "q1": 34.0,
+    "mediana": 64.0,
+    "q3": 89.0,
+    "max": 723,
+    "sem_quadros": 174
+  },
+  "voz_mic2": {
+    "min": 24,
+    "q1": 88.0,
+    "mediana": 116.0,
+    "q3": 159.0,
+    "max": 797,
+    "sem_quadros": 0
+  },
+  "baixa_mic2": {
+    "min": 0,
+    "q1": 63.0,
+    "mediana": 81.0,
+    "q3": 105.0,
+    "max": 728,
+    "sem_quadros": 21
+  },
+  "voz_comum": {
+    "min": 24,
+    "q1": 83.0,
+    "mediana": 110.0,
+    "q3": 150.0,
+    "max": 736,
+    "sem_quadros": 0
+  },
+  "baixa_comum": {
+    "min": 0,
+    "q1": 26.0,
+    "mediana": 55.0,
+    "q3": 82.0,
+    "max": 723,
+    "sem_quadros": 296
+  },
+  "discordantes": {
+    "min": 0,
+    "q1": 13.0,
+    "mediana": 31.0,
+    "q3": 51.0,
+    "max": 369,
+    "sem_quadros": 177
+  },
+  "elegiveis_1": {
+    "pares": 21227,
+    "locutores": 108,
+    "minimo_por_locutor": 116
+  },
+  "elegiveis_5": {
+    "pares": 20393,
+    "locutores": 108,
+    "minimo_por_locutor": 101
+  },
+  "elegiveis_10": {
+    "pares": 19360,
+    "locutores": 108,
+    "minimo_por_locutor": 59
+  },
+  "elegiveis_20": {
+    "pares": 17412,
+    "locutores": 108,
+    "minimo_por_locutor": 24
+  },
+  "elegiveis_30": {
+    "pares": 15537,
+    "locutores": 108,
+    "minimo_por_locutor": 10
+  },
+  "elegiveis_40": {
+    "pares": 13629,
+    "locutores": 108,
+    "minimo_por_locutor": 5
+  },
+  "elegiveis_50": {
+    "pares": 11562,
+    "locutores": 108,
+    "minimo_por_locutor": 1
+  },
+  "elegiveis_60": {
+    "pares": 9271,
+    "locutores": 107,
+    "minimo_por_locutor": 0
+  },
+  "elegiveis_80": {
+    "pares": 4716,
+    "locutores": 100,
+    "minimo_por_locutor": 0
+  },
+  "elegiveis_100": {
+    "pares": 2043,
+    "locutores": 86,
+    "minimo_por_locutor": 0
+  },
+  "elegiveis_120": {
+    "pares": 781,
+    "locutores": 75,
+    "minimo_por_locutor": 0
+  },
+  "elegiveis_150": {
+    "pares": 184,
+    "locutores": 51,
+    "minimo_por_locutor": 0
+  }
+}

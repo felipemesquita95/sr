@@ -86,8 +86,11 @@ que nenhum corpus de trilha única permite:
 
 ## Obtenção
 
-O BrSD é distribuído pelos autores mediante solicitação. O VCTK 0.92 está disponível
-publicamente no repositório da Universidade de Edimburgo (DOI 10.7488/ds/2645).
+O [BrSD 1.0](https://sites.google.com/view/brsduem) oferece um ZIP público com
+400 WAVs e o PDF de metadados. O [VCTK 0.92](https://datashare.ed.ac.uk/handle/10283/3443)
+está disponível no repositório da Universidade de Edimburgo (DOI 10.7488/ds/2645).
 
-Nenhum dos dois é versionado neste repositório. Os perfis em `configs/` apontam para
-os caminhos locais através de `AUDIO_PATH` e `VCTK_ROOT`.
+Nenhum dos dois é versionado neste repositório. Na reexecução de 8 kHz, os áudios
+e os ZIPs ficam em `/media/lsmsqt/HDD/datasets/`. As features e os resultados
+também ficam no HDD, acessíveis pelos links `runs/features` e `runs/models`.
+Os perfis em `configs/` apontam para os áudios por `AUDIO_PATH` e `VCTK_ROOT`.

@@ -8,6 +8,8 @@ __pycache__/
 # Os padrões são ancorados na raiz para não capturarem o código-fonte:
 # "models/" sem barra inicial casaria também com src/sr/models/.
 /runs/
+/output/
+/tmp/
 /saves*/
 /models*/
 *.log

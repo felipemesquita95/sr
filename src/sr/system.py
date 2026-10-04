@@ -9,6 +9,7 @@ seus resultados sejam comparáveis entre si.
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 
 from sr.config import Settings
@@ -28,8 +29,9 @@ class SpeakerRecognitionSystem:
             e as arquiteturas a treinar.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, resume: bool = False) -> None:
         self.settings = settings
+        self.resume = resume
         self.preprocessing = PreprocessingSubsystem(settings)
         self.features = FeatureAdjustmentSubsystem(settings)
         self.training = TrainingSubsystem(settings)
@@ -67,12 +69,47 @@ class SpeakerRecognitionSystem:
             f1_scores: list[float] = []
 
             for fold in range(1, self.settings.effective_folds + 1):
+                if self.resume:
+                    previous = self._completed_fold_metrics(architecture, fold)
+                    if previous is not None:
+                        logger.info('Reaproveitando %s, partição %d.', architecture, fold)
+                        accuracies.append(previous[0])
+                        f1_scores.append(previous[1])
+                        continue
                 split = self.features.prepare_fold(fold)
                 result = self._train_and_evaluate(architecture, split, fold)
                 accuracies.append(result.accuracy)
                 f1_scores.append(result.f1)
 
             self._write_summary(architecture, accuracies, f1_scores)
+
+    def _completed_fold_metrics(self, architecture: str, fold: int) -> tuple[float, float] | None:
+        """Lê uma partição completa do mesmo protocolo, ou pede novo treino."""
+        output = self._fold_directory(architecture, fold)
+        if not (output / 'modelo.keras').is_file():
+            return None
+        try:
+            division = json.loads((output / 'divisao.json').read_text())
+            metrics = json.loads((output / 'metricas.json').read_text())
+            expected = {
+                'particao': fold,
+                'validation_fold_offset': self.settings.validation_fold_offset,
+                'num_folds': self.settings.num_folds,
+                'validation_seed': self.settings.validation_seed,
+            }
+            if any(division.get(key) != value for key, value in expected.items()):
+                return None
+            if (metrics['num_classes'] != self.settings.num_speakers or
+                    metrics['num_amostras_teste'] != division['teste'] or
+                    min(division['treino'], division['validacao'], division['teste']) <= 0):
+                return None
+            accuracy = float(metrics['acuracia'])
+            f1 = float(metrics['f1_macro'])
+            if not (0 <= accuracy <= 1 and 0 <= f1 <= 1):
+                return None
+            return accuracy, f1
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
 
     def run_cross_microphone(self) -> None:
         """Executa o protocolo cross-mic: treina em um microfone, avalia no outro.
@@ -128,6 +165,16 @@ class SpeakerRecognitionSystem:
         model, history = self.training.train(architecture, split, output, fold=fold)
         result = evaluate_model(model, split.test_x, split.test_y, self.settings.num_speakers)
         write_fold_report(result, history, output)
+        (output / 'divisao.json').write_text(json.dumps({
+            'particao': fold,
+            'treino': int(len(split.train_y)),
+            'validacao': int(len(split.validation_y)),
+            'teste': int(len(split.test_y)),
+            'validation_fold_offset': self.settings.validation_fold_offset,
+            'num_folds': self.settings.num_folds,
+            'validation_seed': self.settings.validation_seed,
+            'quadros_por_gravacao': int(split.input_shape[-1]),
+        }, indent=2, ensure_ascii=False))
         return result
 
     def _write_summary(self, architecture: str, accuracies: list[float],

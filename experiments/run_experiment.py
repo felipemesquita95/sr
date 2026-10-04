@@ -40,6 +40,9 @@ def parse_arguments() -> argparse.Namespace:
         '--preprocess-only', action='store_true',
         help='Executa apenas o pré-processamento e encerra.')
     parser.add_argument(
+        '--resume', action='store_true',
+        help='Reaproveita partições concluídas e refaz as incompletas.')
+    parser.add_argument(
         '--permute-labels', action='store_true',
         help='Controle negativo: embaralha os rótulos. A acurácia deve cair ao acaso.')
     parser.add_argument(
@@ -77,7 +80,7 @@ def main() -> int:
             permute_labels=settings.permute_labels or arguments.permute_labels,
         )
 
-    SpeakerRecognitionSystem(settings).run()
+    SpeakerRecognitionSystem(settings, resume=arguments.resume).run()
     return 0
 
 
